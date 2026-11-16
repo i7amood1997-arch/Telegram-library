@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+web/dist/
+# local working data (never commit decrypted data)
+local-data/
+*.session
+.env
+web/public/demo/
