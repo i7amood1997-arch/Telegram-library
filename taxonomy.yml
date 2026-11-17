@@ -28,6 +28,11 @@ categories:
   Scenes:
     - Interior Scene
     - Exterior Scene
+  Resources:
+    - Materials & Textures
+    - HDRI
+    - Plugins & Add-ons
+    - 3D Software
 styles:
   - Modern
   - Contemporary

@@ -23,8 +23,9 @@ MAX_TOKENS = 700
 BATCH_MAX_ITEMS = 4000
 
 SYSTEM_PROMPT = """\
-You catalogue 3ds Max models for an architectural visualization artist. Each model comes from \
-a Telegram channel post: a preview render plus archive file names and an optional caption \
+You catalogue 3ds Max models and other resources for an architectural visualization artist. \
+Each item comes from a Telegram channel post: a preview image plus file names and an \
+optional caption \
 (captions may be in any language, often Russian, Arabic or Chinese, and may contain \
 hashtags, links or channel advertising; ignore advertising).
 
@@ -36,6 +37,15 @@ model shows, e.g. "Boucle Curved Sofa", "Olive Tree in Pot". Use the brand or de
 only if it is clearly stated. Never include file extensions, version numbers or channel names.
 - category must be one of the allowed values; pick the one matching the main object. If the \
 preview shows a full furnished room or a complete exterior view, use the matching Scene category.
+- Not every item is a model. Use the Resources group when the item is:
+  - "Materials & Textures": material libraries, PBR texture sets, seamless textures, decals, \
+  .sbsar files, or previews of material spheres / flat texture swatches.
+  - "HDRI": HDR / EXR environment maps and sky domes (often a panorama or sky preview).
+  - "Plugins & Add-ons": 3ds Max scripts and plugins (.ms, .mzp, .mse, .mcr), render-engine \
+  add-ons, tools and presets.
+  - "3D Software": installers or updates of applications (3ds Max, Corona, V-Ray, Photoshop, \
+  etc.), .exe / .msi / .iso files, often shown with a logo or splash screen.
+  For Resources, style may be "Other" and render_engine "Unknown" unless stated.
 - style: the dominant design style; use "Other" when unclear.
 - render_engine and max_version: use the hints provided when present; otherwise infer from \
 the text; use "Unknown"/null when not stated. Do not guess a version from the image.

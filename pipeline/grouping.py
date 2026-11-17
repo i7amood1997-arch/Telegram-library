@@ -24,7 +24,9 @@ from .config import GROUP_MAX_MESSAGE_GAP, GROUP_MAX_SECONDS, NAME_SIMILARITY
 
 Kind = Literal["photo", "archive", "other"]
 
-ARCHIVE_EXTS = {"zip", "rar", "7z", "max"}
+# Model archives, plus single-file resources: HDRI maps, scripts/plugins, installers, materials.
+RESOURCE_EXTS = {"hdr", "exr", "mzp", "ms", "mse", "mcr", "exe", "msi", "iso", "sbsar"}
+ARCHIVE_EXTS = {"zip", "rar", "7z", "max"} | RESOURCE_EXTS
 
 # (regex, ext) pairs; group "base" is the set name, group "part" is the part number.
 _PART_PATTERNS: list[tuple[re.Pattern[str], str | None]] = [
@@ -36,7 +38,8 @@ _PART_PATTERNS: list[tuple[re.Pattern[str], str | None]] = [
      None),
     (re.compile(r"^(?P<base>.+?)\s*\((?P<part>\d+)\)\.(?P<ext>rar|zip|7z)$", re.I), None),
 ]
-_PLAIN = re.compile(r"^(?P<base>.+)\.(?P<ext>zip|rar|7z|max)$", re.I)
+_PLAIN = re.compile(
+    r"^(?P<base>.+)\.(?P<ext>zip|rar|7z|max|hdr|exr|mzp|ms|mse|mcr|exe|msi|iso|sbsar)$", re.I)
 
 
 @dataclass(frozen=True)

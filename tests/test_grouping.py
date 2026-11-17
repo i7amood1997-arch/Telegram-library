@@ -138,3 +138,11 @@ def test_state_is_json_serializable():
 def test_deep_links():
     assert deep_link(1, "somechannel", 5) == "https://t.me/somechannel/5"
     assert deep_link(1500000000, None, 7) == "https://t.me/c/1500000000/7"
+
+
+def test_resource_file_types():
+    for name in ("Sunset_8k.hdr", "Sky.exr", "FloorGenerator.mzp", "script.ms", "Setup.exe",
+                 "Fabric.sbsar"):
+        assert is_archive(name), name
+    _, _, items = run([photo(1), arch(2, "Sunset_Sky_8k.hdr")])
+    assert items["1234:2"]["files"][0]["ext"] == "hdr"
