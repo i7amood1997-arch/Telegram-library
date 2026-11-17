@@ -20,17 +20,25 @@ export function b64encode(bytes) {
 
 /**
  * @param {string} text
- * @returns {{iter: number, salt: Uint8Array, saltB64: string, iv: Uint8Array, ct: Uint8Array}}
+ * @returns {{v: number, iter: number, salt: Uint8Array, saltB64: string, iv: Uint8Array,
+ *   ct: Uint8Array, slots: {iv: Uint8Array, wk: Uint8Array}[]}}
  */
 export function parseEnvelope(text) {
   const env = JSON.parse(text);
-  if (env.v !== 1 || env.kdf !== 'pbkdf2-sha256') throw new Error('Unsupported data format');
+  if ((env.v !== 1 && env.v !== 2) || env.kdf !== 'pbkdf2-sha256') {
+    throw new Error('Unsupported data format');
+  }
   return {
+    v: env.v,
     iter: env.iter,
     salt: b64decode(env.salt),
     saltB64: env.salt,
     iv: b64decode(env.iv),
     ct: b64decode(env.ct),
+    slots: (env.slots || []).map((/** @type {{iv: string, wk: string}} */ s) => ({
+      iv: b64decode(s.iv),
+      wk: b64decode(s.wk),
+    })),
   };
 }
 
@@ -50,13 +58,34 @@ export async function deriveKey(password, salt, iterations) {
   return new Uint8Array(bits);
 }
 
+/** @param {Uint8Array} raw */
+function aesKey(raw) {
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+}
+
 /**
- * Decrypt an envelope with a raw key. Throws on a wrong key (GCM authentication failure).
+ * Decrypt an envelope with the key derived from a password. Throws on a wrong key.
+ * v1: the derived key encrypts the data directly.
+ * v2: the derived key unwraps the content key from one of the password slots.
  * @param {ReturnType<typeof parseEnvelope>} env @param {Uint8Array} rawKey
  */
 export async function decryptWithKey(env, rawKey) {
-  const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: env.iv }, key, env.ct);
+  let dataKey = await aesKey(rawKey);
+  if (env.v === 2) {
+    let contentKey = null;
+    for (const slot of env.slots) {
+      try {
+        const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: slot.iv }, dataKey, slot.wk);
+        contentKey = new Uint8Array(raw);
+        break;
+      } catch {
+        // not this slot
+      }
+    }
+    if (!contentKey) throw new Error('Wrong password');
+    dataKey = await aesKey(contentKey);
+  }
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: env.iv }, dataKey, env.ct);
   const stream = new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'));
   return JSON.parse(await new Response(stream).text());
 }

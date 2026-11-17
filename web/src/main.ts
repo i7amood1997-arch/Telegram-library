@@ -4,7 +4,7 @@ import {
   debounce, el, formatDate, formatSize, icon, relativeTime, safeLocal, safeSession, storage,
 } from './dom';
 import { VirtualGrid } from './grid';
-import type { Added, FacetKey, Filters, Item, Library, Sort } from './types';
+import type { Added, FacetKey, Filters, Item, Library, OwnerInfo, Sort } from './types';
 
 // ---------------------------------------------------------------------------------------------
 // Data location & persistence keys
@@ -102,7 +102,7 @@ async function boot(): Promise<void> {
   const key = rememberedKey(env.saltB64);
   if (key) {
     try {
-      startApp((await decryptWithKey(env, key)) as Library);
+      startApp((await decryptWithKey(env, key)) as Library, key);
       return;
     } catch {
       forgetKey();
@@ -139,7 +139,7 @@ function showLock(env: Envelope): void {
       const lib = (await decryptWithKey(env, key)) as Library;
       const record = JSON.stringify({ k: b64encode(key), s: env.saltB64 });
       storage.set(remember.checked ? safeLocal() : safeSession(), KEY_STORE, record);
-      startApp(lib);
+      startApp(lib, key);
     } catch {
       error.textContent = 'Incorrect password. Please try again.';
       button.disabled = false;
@@ -234,7 +234,7 @@ function computeNewSince(): number {
 // App
 // ---------------------------------------------------------------------------------------------
 
-function startApp(lib: Library): void {
+function startApp(lib: Library, key: Uint8Array): void {
   const items = lib.items;
   const byId = new Map(items.map((i) => [i.id, i]));
   const channelName = new Map(lib.channels.map((c) => [String(c.id), c.title || `Channel ${c.id}`]));
@@ -288,6 +288,10 @@ function startApp(lib: Library): void {
     storage.set(safeLocal(), THEME, next);
     setThemeIcon();
   });
+  const shareBtn = el('button', {
+    class: 'icon-btn', type: 'button', 'aria-label': 'Share access', title: 'Share access',
+    hidden: true, onclick: () => openShare(),
+  }, icon('users'));
   const lockBtn = el('button', {
     class: 'icon-btn', type: 'button', 'aria-label': 'Lock', title: 'Lock library',
     onclick: () => { forgetKey(); location.reload(); },
@@ -300,7 +304,7 @@ function startApp(lib: Library): void {
   const header = el('header', { class: 'topbar' },
     el('div', { class: 'brand' }, brandMark(), el('span', { class: 'brand-name' }, 'Model Library')),
     el('div', { class: 'search' }, icon('search', 18), search, el('kbd', { class: 'kbd' }, '/')),
-    el('div', { class: 'topbar-actions' }, themeBtn, lockBtn),
+    el('div', { class: 'topbar-actions' }, shareBtn, themeBtn, lockBtn),
   );
 
   const facetRoot = el('div', { class: 'facets' });
@@ -343,7 +347,64 @@ function startApp(lib: Library): void {
   );
 
   const dialog = el('dialog', { class: 'detail', 'aria-label': 'Model details' });
-  app.replaceChildren(header, el('div', { class: 'layout' }, sidebar, main), scrim, dialog);
+  const shareDialog = el('dialog', { class: 'share', 'aria-label': 'Share access' });
+  shareDialog.addEventListener('click', (e) => { if (e.target === shareDialog) shareDialog.close(); });
+  app.replaceChildren(header, el('div', { class: 'layout' }, sidebar, main), scrim, dialog,
+    shareDialog);
+
+  // Owner-only: guest passwords to share. owner.enc opens with the owner's key only, so the
+  // button never appears for guests.
+  let owner: OwnerInfo | null = null;
+  void (async () => {
+    try {
+      const res = await fetch(`${DATA_BASE}owner.enc`, { cache: 'no-cache' });
+      if (!res.ok) return;
+      owner = (await decryptWithKey(parseEnvelope(await res.text()), key)) as OwnerInfo;
+      shareBtn.hidden = false;
+    } catch { /* not the owner */ }
+  })();
+
+  function copyButton(label: string, text: string): HTMLButtonElement {
+    const btn = el('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, icon('copy', 15), label);
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.replaceChildren(icon('check', 15), 'Copied');
+      } catch {
+        btn.replaceChildren('Copy failed');
+      }
+      setTimeout(() => btn.replaceChildren(icon('copy', 15), label), 1600);
+    });
+    return btn;
+  }
+
+  function openShare(): void {
+    if (!owner) return;
+    const siteUrl = `${location.origin}${location.pathname}`;
+    const rows = owner.guests.map((g) => el('li', { class: 'guest' },
+      el('div', { class: 'guest-head' },
+        el('strong', {}, g.name),
+        el('span', { class: 'muted small' }, `added ${relativeTime(g.created)}`)),
+      el('code', { class: 'guest-pw' }, g.password),
+      el('div', { class: 'guest-actions' },
+        copyButton('Copy password', g.password),
+        copyButton('Copy invite', `Model Library\n${siteUrl}\nPassword: ${g.password}`)),
+    ));
+    shareDialog.replaceChildren(el('div', { class: 'share-inner' },
+      el('div', { class: 'share-head' },
+        el('h2', {}, 'Share access'),
+        el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close',
+          onclick: () => shareDialog.close() }, icon('close'))),
+      el('p', { class: 'muted' }, 'Guests can browse and search the library. Only you can see this list.'),
+      rows.length ? el('ul', { class: 'guest-list' }, rows)
+        : el('p', { class: 'empty-note' }, 'No guests yet.'),
+      owner.secret_guests ? el('p', { class: 'muted small' },
+        `${owner.secret_guests} more guest password(s) are set in the GUEST_PASSWORDS secret.`) : null,
+      el('p', { class: 'muted small' },
+        'To add or remove a guest, run the “Sync library” workflow with mode add-guest or remove-guest and the guest’s name.'),
+    ));
+    shareDialog.showModal();
+  }
 
   function toggleSidebar(open: boolean): void {
     document.body.classList.toggle('sidebar-open', open);

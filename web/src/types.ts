@@ -46,3 +46,8 @@ export interface Filters {
   thumb: boolean;
   sort: Sort;
 }
+
+export interface OwnerInfo {
+  guests: { name: string; password: string; created: number }[];
+  secret_guests: number;
+}

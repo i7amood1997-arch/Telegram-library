@@ -148,7 +148,7 @@ def test_store_idempotent_and_rotation(tmp_path):
     assert s3.rotated
     assert s3.save(build_library(s3.db, TAX), now=3) == {"library": True, "db": True}
     lib_blob = (tmp_path / "library.enc").read_text()
-    assert crypto.decrypt_json(lib_blob, "new")["items"][0]["id"] == "5:10"
+    assert crypto.decrypt_json_multi(lib_blob, "new")["items"][0]["id"] == "5:10"
 
 
 def test_store_refuses_missing_db(tmp_path):
@@ -197,3 +197,45 @@ def test_fallback_uses_resource_hint():
                       "part": None, "msg_id": 10}], caption="")
     assert fallback(it)["category"] == "Materials & Textures"
     assert fallback(it)["group"] == "Resources"
+
+
+# ---------- guest passwords ----------
+
+def test_guest_passwords_unlock_library_and_can_be_revoked(tmp_path):
+    lib = build_library({"channels": {}, "items": {"5:10": item()}}, TAX)
+
+    s = Store(tmp_path, "owner", guest_passwords=["guest-a", "guest-b"])
+    s.load()
+    s.save(lib, now=1)
+    blob = (tmp_path / "library.enc").read_text()
+    for pw in ("owner", "guest-a", "guest-b"):
+        assert crypto.decrypt_json_multi(blob, pw)["items"][0]["id"] == "5:10"
+    with pytest.raises(crypto.DecryptionError):
+        crypto.decrypt_json_multi(blob, "stranger")
+    # Guests can never open the pipeline state.
+    with pytest.raises(crypto.DecryptionError):
+        crypto.decrypt_json((tmp_path / "db.enc").read_text(), "guest-a")
+    key_before = s.db["content_key"]
+
+    # Same passwords, same content: nothing rewritten.
+    s2 = Store(tmp_path, "owner", guest_passwords=["guest-b", "guest-a"])
+    s2.load()
+    assert s2.save(lib, now=2) == {"library": False, "db": False}
+
+    # Revoke guest-a: library re-encrypted with a NEW content key.
+    s3 = Store(tmp_path, "owner", guest_passwords=["guest-b"])
+    s3.load()
+    assert s3.save(lib, now=3)["library"] is True
+    blob = (tmp_path / "library.enc").read_text()
+    assert s3.db["content_key"] != key_before
+    with pytest.raises(crypto.DecryptionError):
+        crypto.decrypt_json_multi(blob, "guest-a")
+    assert crypto.decrypt_json_multi(blob, "guest-b")["items"]
+    assert crypto.decrypt_json_multi(blob, "owner")["items"]
+
+
+def test_guest_passwords_env_parsing(monkeypatch):
+    from pipeline.config import Settings
+
+    monkeypatch.setenv("GUEST_PASSWORDS", "first pass\n\n  second-pass  \n")
+    assert Settings.from_env().guest_passwords == ["first pass", "second-pass"]

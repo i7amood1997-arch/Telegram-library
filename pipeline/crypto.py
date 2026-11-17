@@ -77,3 +77,61 @@ def decrypt_json(blob: str, password: str) -> Any:
         return json.loads(gzip.decompress(plain))
     except (InvalidTag, ValueError, KeyError) as exc:
         raise DecryptionError(type(exc).__name__) from None
+
+
+# --------------------------------------------------------------------------------------------
+# Format v2: one content key, unlocked by any of several passwords ("key slots").
+#
+#   {"v": 2, "kdf": "pbkdf2-sha256", "iter": 600000, "salt": "<b64>",
+#    "slots": [{"iv": "<b64>", "wk": "<b64 AES-GCM(password_key, content_key)>"}, ...],
+#    "iv": "<b64>", "ct": "<b64 AES-GCM(content_key, gzip(JSON))>"}
+#
+# All slots share one salt, so the browser derives the (slow) PBKDF2 key once and then tries
+# each slot cheaply. Slots are shuffled so their order says nothing about whose they are.
+# --------------------------------------------------------------------------------------------
+
+FORMAT_V2 = 2
+
+
+def new_content_key() -> bytes:
+    return os.urandom(32)
+
+
+def encrypt_json_multi(payload: Any, passwords: list[str], salt: bytes, content_key: bytes
+                       ) -> str:
+    if not passwords:
+        raise ValueError("at least one password is required")
+    slots = []
+    for pw in passwords:
+        iv = os.urandom(12)
+        wk = AESGCM(derive_key(pw, salt)).encrypt(iv, content_key, None)
+        slots.append({"iv": _b64e(iv), "wk": _b64e(wk)})
+    order = list(range(len(slots)))
+    for i in range(len(order) - 1, 0, -1):  # Fisher-Yates with os.urandom
+        j = int.from_bytes(os.urandom(4), "big") % (i + 1)
+        order[i], order[j] = order[j], order[i]
+    iv = os.urandom(12)
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ct = AESGCM(content_key).encrypt(iv, gzip.compress(raw, mtime=0), None)
+    return json.dumps({
+        "v": FORMAT_V2, "kdf": "pbkdf2-sha256", "iter": KDF_ITERATIONS, "salt": _b64e(salt),
+        "slots": [slots[i] for i in order], "iv": _b64e(iv), "ct": _b64e(ct),
+    })
+
+
+def decrypt_json_multi(blob: str, password: str) -> Any:
+    try:
+        env = json.loads(blob)
+        if env.get("v") != FORMAT_V2:
+            return decrypt_json(blob, password)
+        key = derive_key(password, _b64d(env["salt"]), int(env["iter"]))
+        for slot in env["slots"]:
+            try:
+                content_key = AESGCM(key).decrypt(_b64d(slot["iv"]), _b64d(slot["wk"]), None)
+            except InvalidTag:
+                continue
+            plain = AESGCM(content_key).decrypt(_b64d(env["iv"]), _b64d(env["ct"]), None)
+            return json.loads(gzip.decompress(plain))
+        raise DecryptionError("no matching password")
+    except (InvalidTag, ValueError, KeyError) as exc:
+        raise DecryptionError(type(exc).__name__) from None

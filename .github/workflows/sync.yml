@@ -6,10 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'sync = fetch new posts · reclassify = redo all categories · rebuild = republish only'
+        description: 'sync = fetch new posts · reclassify = redo all categories · rebuild = republish only · add-guest / remove-guest = manage website guests'
         type: choice
-        options: [sync, reclassify, rebuild]
+        options: [sync, reclassify, rebuild, add-guest, remove-guest]
         default: sync
+      guest_name:
+        description: 'For add-guest / remove-guest only: a short label such as "friend1" (visible in the public run log; the password is never shown here)'
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
@@ -76,6 +80,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           SITE_PASSWORD_OLD: ${{ secrets.SITE_PASSWORD_OLD }}
+          GUEST_PASSWORDS: ${{ secrets.GUEST_PASSWORDS }}
+          GUEST_NAME: ${{ inputs.guest_name }}
           THUMB_SECRET: ${{ secrets.THUMB_SECRET }}
           CLASSIFIER_MODEL: ${{ vars.CLASSIFIER_MODEL }}
           MAX_CLASSIFICATIONS_PER_RUN: ${{ vars.MAX_CLASSIFICATIONS_PER_RUN }}
@@ -126,6 +132,7 @@ jobs:
           rm -rf site/demo
           if [ -f data/library.enc ]; then
             cp data/library.enc site/
+            if [ -f data/owner.enc ]; then cp data/owner.enc site/; fi
             if [ -d data/thumbs ]; then cp -r data/thumbs site/; fi
           fi
           touch site/.nojekyll
