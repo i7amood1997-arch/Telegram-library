@@ -20,7 +20,6 @@ from typing import Any
 
 from .classify import Classifier, needs_classification
 from .config import Settings, Taxonomy, load_taxonomy
-from .grouping import group_messages, new_channel_state
 from .store import Store, StoreError
 from .thumbnails import save_thumb
 
@@ -45,7 +44,8 @@ async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[
     Time is split so one huge channel cannot starve the others: fetching gets at most
     FETCH_SHARE of the budget (divided fairly across channels), thumbnails get the rest.
     """
-    from .telegram_client import ChannelResolver, download_photos, fetch_new, make_client
+    from .backfill import sync_channel
+    from .telegram_client import ChannelResolver, download_photos, fetch_range, make_client
 
     db = store.db
     migrations = db.setdefault("migrations", [])
@@ -81,16 +81,22 @@ async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[
             share_deadline = time.time() + max(0.0, fetch_deadline - time.time()) / remaining
             if time.time() > fetch_deadline:
                 continue
-            msgs, photos = await fetch_new(client, entity, ch["last_message_id"], share_deadline,
-                                           limit=MAX_MESSAGES_PER_CHANNEL)
-            photo_cache.update({(cid, mid): m for mid, m in photos.items()})
-            state = db["states"].setdefault(str(cid), new_channel_state())
-            result = group_messages(cid, msgs, state, db["items"])
-            if msgs:
-                ch["last_message_id"] = max(m.id for m in msgs)
-            stats["messages"] += len(msgs)
+
+            async def fetch(lo: int, hi: int, limit: int, *, _entity: Any = entity,
+                            _cid: int = cid, _deadline: float = share_deadline
+                            ) -> tuple[list[Any], bool]:
+                msgs, photos, complete = await fetch_range(client, _entity, lo, hi, _deadline,
+                                                           limit)
+                photo_cache.update({(_cid, mid): m for mid, m in photos.items()})
+                return msgs, complete
+
+            result = await sync_channel(cid, ch, db["states"], db["items"], fetch,
+                                        MAX_MESSAGES_PER_CHANNEL)
+            stats["messages"] += result.messages
             stats["new_items"] += len(result.new_ids)
             stats["updated_items"] += len(result.updated_ids)
+            stats["linked_previews"] += len(result.linked_ids)
+            stats["history_gaps"] += len(ch.get("gaps", []))
 
         # Thumbnails: all channels together, newest models first, downloaded concurrently.
         todo = [it for it in db["items"].values()

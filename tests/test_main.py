@@ -33,9 +33,10 @@ def install_fakes(monkeypatch, feed):
     async def resolve(self, ref):
         return entity
 
-    async def fetch_new(client, ent, min_id, deadline, limit=None):
-        msgs = [m for m in feed if m.id > min_id]
-        return msgs, {}
+    async def fetch_range(client, ent, min_id, max_id, deadline, limit):
+        msgs = sorted((m for m in feed if m.id > min_id and (not max_id or m.id < max_id)),
+                      key=lambda m: m.id, reverse=True)
+        return msgs[:limit], {}, len(msgs) <= limit
 
     async def download_photos(client, entities, items, cache, deadline, on_result):
         for it in items:
@@ -43,7 +44,7 @@ def install_fakes(monkeypatch, feed):
 
     monkeypatch.setattr(tc, "make_client", lambda *a: FakeClient())
     monkeypatch.setattr(tc.ChannelResolver, "resolve", resolve)
-    monkeypatch.setattr(tc, "fetch_new", fetch_new)
+    monkeypatch.setattr(tc, "fetch_range", fetch_range)
     monkeypatch.setattr(tc, "download_photos", download_photos)
 
 

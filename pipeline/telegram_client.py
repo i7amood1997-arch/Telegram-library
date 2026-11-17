@@ -63,26 +63,32 @@ class ChannelResolver:
         return self._dialogs[cid]
 
 
-async def fetch_new(
-    client: TelegramClient, entity: Any, min_id: int, deadline: float, limit: int | None = None
-) -> tuple[list[Msg], dict[int, Any]]:
-    """Messages with id > min_id in ascending order, plus raw photo messages by id."""
+async def fetch_range(
+    client: TelegramClient, entity: Any, min_id: int, max_id: int, deadline: float, limit: int
+) -> tuple[list[Msg], dict[int, Any], bool]:
+    """Messages with min_id < id < max_id (max_id=0: no upper bound), NEWEST first.
+
+    Returns (messages, raw photo messages by id, complete). complete=True means every message
+    in the range was read; False means the limit, the deadline or a rate limit cut it short.
+    """
     msgs: list[Msg] = []
     photos: dict[int, Any] = {}
+    complete = False
     try:
-        async for m in client.iter_messages(entity, min_id=min_id, reverse=True, limit=limit,
+        async for m in client.iter_messages(entity, min_id=min_id, max_id=max_id, limit=limit,
                                             wait_time=0.5):
             if time.time() > deadline:
-                break
+                return msgs, photos, False
             norm = normalize(m)
             msgs.append(norm)
             if norm.kind == "photo":
                 photos[m.id] = m
+        complete = len(msgs) < limit
     except FloodWaitError as exc:
         log.warning("flood wait %ss; stopping this channel for now", exc.seconds)
         if exc.seconds <= MAX_FLOOD_WAIT:
             await asyncio.sleep(exc.seconds)
-    return msgs, photos
+    return msgs, photos, complete
 
 
 DOWNLOAD_CONCURRENCY = 6

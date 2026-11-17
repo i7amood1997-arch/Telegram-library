@@ -167,3 +167,33 @@ def test_library_contents():
     assert lib["channels"] == [{"id": 5, "title": "C"}]
     assert build_library(db, TAX, active_channel_ids={99})["items"] == []
     json.dumps(lib)
+
+
+def test_resource_hints_from_names_and_captions():
+    from pipeline.classify import resource_hint
+
+    cases = {
+        "Wood_PBR_Textures_4k.rar": "Materials & Textures",
+        "3D Oasis.rar #Текстуры #Материалы": "Materials & Textures",
+        "Sunset_Sky_HDRI_Pack.zip": "HDRI",
+        "Corona_Renderer_12_Setup_x64.rar": "3D Software",
+        "Autodesk 3ds Max 2025 Win64.iso": "3D Software",
+        "FloorGenerator_v3.mzp": "Plugins & Add-ons",
+        "RailClone Pro plugin.zip": "Plugins & Add-ons",
+        "Interior_Lighting_Course_Part1.rar": "Courses & Tutorials",
+        "3D Oasis.rar #Уроки": "Courses & Tutorials",
+    }
+    for text, expected in cases.items():
+        assert resource_hint(text) == expected, text
+    for model in ("Boucle_Sofa_Corona.rar #Мебель #Диваны #3dsMax #Corona",
+                  "Garden_Tools_Set.rar", "Panoramic_Window.rar", "Updated_Chair.zip"):
+        assert resource_hint(model) is None, model
+
+
+def test_fallback_uses_resource_hint():
+    from pipeline.classify import fallback
+
+    it = item(files=[{"name": "Concrete_Seamless_Textures.zip", "size": 1, "ext": "zip",
+                      "part": None, "msg_id": 10}], caption="")
+    assert fallback(it)["category"] == "Materials & Textures"
+    assert fallback(it)["group"] == "Resources"

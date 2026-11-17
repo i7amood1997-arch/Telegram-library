@@ -23,8 +23,9 @@ MAX_TOKENS = 700
 BATCH_MAX_ITEMS = 4000
 
 SYSTEM_PROMPT = """\
-You catalogue 3ds Max models for an architectural visualization artist. Each model comes from \
-a Telegram channel post: a preview render plus archive file names and an optional caption \
+You catalogue 3ds Max models and other resources for an architectural visualization artist. \
+Each item comes from a Telegram channel post: a preview image plus file names and an \
+optional caption \
 (captions may be in any language, often Russian, Arabic or Chinese, and may contain \
 hashtags, links or channel advertising; ignore advertising).
 
@@ -36,6 +37,21 @@ model shows, e.g. "Boucle Curved Sofa", "Olive Tree in Pot". Use the brand or de
 only if it is clearly stated. Never include file extensions, version numbers or channel names.
 - category must be one of the allowed values; pick the one matching the main object. If the \
 preview shows a full furnished room or a complete exterior view, use the matching Scene category.
+- Not every item is a model. Most resources are ALSO shipped as .rar/.zip archives, so decide \
+from the file names, caption (including hashtags in any language) and preview together, not \
+from the file extension. Use the Resources group when the item is:
+  - "Materials & Textures": material libraries, PBR texture sets, seamless textures, decals, \
+  Substance files, or previews of material spheres / flat texture swatches.
+  - "HDRI": HDR / EXR environment maps, sky domes, panoramic skies.
+  - "Plugins & Add-ons": 3ds Max scripts and plugins, render-engine add-ons, tools, presets.
+  - "3D Software": installers or updates of applications (3ds Max, Corona, V-Ray, Photoshop, \
+  etc.), often shown with a logo, box art or splash screen.
+  - "Courses & Tutorials": video courses, lessons, tutorials, masterclasses, books.
+  The "Detected hints" may include a keyword-based resource_type guess: treat it as strong \
+  evidence, but override it when the preview clearly shows a regular 3D model (for example a \
+  sofa whose caption merely mentions "materials included").
+  For Resources, style may be "Other" and render_engine "Unknown" unless stated; the title \
+  should name the resource (e.g. "Oak Wood PBR Textures", "Sunset Sky HDRI Pack").
 - style: the dominant design style; use "Other" when unclear.
 - render_engine and max_version: use the hints provided when present; otherwise infer from \
 the text; use "Unknown"/null when not stated. Do not guess a version from the image.
@@ -55,9 +71,38 @@ _RENDER_PATTERNS = [
 _MAX_VERSION = re.compile(r"(?:3ds[\s_\-]*)?max[\s_\-]*(20[0-3]\d)(?!\d)", re.I)
 
 
+# Keyword hints for non-model resources, checked in order (most specific first). Covers
+# English plus common Russian hashtags/words, since many channels post in Russian.
+_RESOURCE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("Courses & Tutorials", re.compile(
+        r"course|tutorial|lesson|masterclass|master class|training|udemy|domestika|"
+        r"skillshare|curso|курс|урок|обучени|мастер-класс", re.I)),
+    ("HDRI", re.compile(r"hdri|(?<![a-z])hdr(?![a-z])|(?<![a-z])exr(?![a-z])|sky ?dome|"
+                        r"skies|небо", re.I)),
+    ("3D Software", re.compile(
+        r"(?<![a-z])(setup|installer|install|portable|x64|win64|repack|update)(?![a-z])|"
+        r"(?<![a-z])(exe|msi|iso)(?![a-z])|программ|установ", re.I)),
+    ("Plugins & Add-ons", re.compile(
+        r"plug-?in|add-?on|script|(?<![a-z])(mzp|mse|mcr)(?![a-z])|скрипт|плагин", re.I)),
+    ("Materials & Textures", re.compile(
+        r"texture|material|(?<![a-z])pbr(?![a-z])|seamless|sbsar|substance|текстур|материал",
+        re.I)),
+]
+
+
+def resource_hint(text: str) -> str | None:
+    for category, pattern in _RESOURCE_PATTERNS:
+        if pattern.search(text):
+            return category
+    return None
+
+
 def extract_hints(text: str) -> dict[str, str]:
     """Deterministic hints from file names + caption."""
     hints: dict[str, str] = {}
+    resource = resource_hint(text)
+    if resource:
+        hints["resource_type"] = resource
     engines = {name for name, pat in _RENDER_PATTERNS if pat.search(text)}
     if len(engines) == 1:
         hints["render_engine"] = engines.pop()
@@ -146,10 +191,11 @@ def normalize(data: dict[str, Any], tax: Taxonomy, hints: dict[str, str]) -> dic
 
 
 def fallback(item: dict[str, Any]) -> dict[str, Any]:
+    resource = resource_hint(item_text(item))
     return {
         "title": pretty_title(item),
-        "group": "Uncategorized",
-        "category": "Uncategorized",
+        "group": "Resources" if resource else "Uncategorized",
+        "category": resource or "Uncategorized",
         "style": "Other",
         "render_engine": extract_hints(item_text(item)).get("render_engine", "Unknown"),
         "max_version": extract_hints(item_text(item)).get("max_version"),
