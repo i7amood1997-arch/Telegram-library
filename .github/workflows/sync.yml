@@ -130,10 +130,19 @@ jobs:
           fi
           touch site/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      # Same as actions/upload-pages-artifact, but without listing every file in the log
+      # (thousands of thumbnails would bury the pipeline summary).
+      - name: Package site
+        if: steps.decide.outputs.deploy == 'true'
+        run: tar --dereference --hard-dereference -C site -cf "$RUNNER_TEMP/artifact.tar" .
+
+      - uses: actions/upload-artifact@v4
         if: steps.decide.outputs.deploy == 'true'
         with:
-          path: site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
 
   deploy:
     needs: sync
