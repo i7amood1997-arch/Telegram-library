@@ -1,0 +1,19 @@
+{
+  "name": "telegram-library-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "demo": "cd .. && python -m pipeline.demo"
+  },
+  "dependencies": {
+    "minisearch": "7.1.2"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vite": "6.3.5"
+  }
+}

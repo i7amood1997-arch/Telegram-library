@@ -1,0 +1,214 @@
+"""Command-line entry point.
+
+    python -m pipeline.main sync        # fetch new posts, thumbnails, classify, publish
+    python -m pipeline.main reclassify  # re-run classification for every item (within caps)
+    python -m pipeline.main rebuild     # only rebuild library.enc from db.enc
+
+Logs contain only counts and durations: never titles, captions, file names or channels.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from .classify import Classifier, needs_classification
+from .config import Settings, Taxonomy, load_taxonomy
+from .grouping import group_messages, new_channel_state
+from .store import Store, StoreError
+from .thumbnails import save_thumb
+
+log = logging.getLogger("pipeline")
+
+MAX_THUMB_ATTEMPTS = 3
+
+
+def setup_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    for noisy in ("telethon", "httpx", "httpcore", "anthropic"):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
+
+
+async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[str, int]
+                 ) -> None:
+    from .telegram_client import ChannelResolver, download_photo, fetch_new, make_client
+
+    db = store.db
+    async with make_client(settings.api_id, settings.api_hash, settings.session) as client:
+        resolver = ChannelResolver(client)
+        for idx, ref in enumerate(settings.channels):
+            try:
+                entity = await resolver.resolve(ref)
+            except Exception as exc:
+                log.warning("channel #%d could not be resolved (%s)", idx + 1, type(exc).__name__)
+                stats["channel_errors"] += 1
+                continue
+            cid = int(entity.id)
+            ch = db["channels"].setdefault(str(cid), {"id": cid, "last_message_id": 0})
+            ch["ref"] = ref
+            ch["title"] = getattr(entity, "title", "") or ""
+            ch["username"] = getattr(entity, "username", None)
+            if time.time() > deadline:
+                continue
+
+            msgs, photo_cache = await fetch_new(client, entity, ch["last_message_id"], deadline)
+            state = db["states"].setdefault(str(cid), new_channel_state())
+            result = group_messages(cid, msgs, state, db["items"])
+            if msgs:
+                ch["last_message_id"] = max(m.id for m in msgs)
+            stats["messages"] += len(msgs)
+            stats["new_items"] += len(result.new_ids)
+            stats["updated_items"] += len(result.updated_ids)
+
+            # Thumbnails for new items, plus retries for earlier failures in this channel.
+            todo = [it for it in db["items"].values()
+                    if it["channel_id"] == cid and it.get("preview_message_id")
+                    and not it.get("thumb")
+                    and it.get("thumb_attempts", 0) < MAX_THUMB_ATTEMPTS]
+            for it in todo:
+                if time.time() > deadline:
+                    break
+                try:
+                    data = await download_photo(client, entity, it["preview_message_id"],
+                                                photo_cache)
+                    if data is None:
+                        it["thumb_attempts"] = MAX_THUMB_ATTEMPTS
+                        continue
+                    it["thumb"] = save_thumb(store.thumbs_dir, settings.thumb_secret, it["id"],
+                                             data)
+                    it.pop("thumb_attempts", None)
+                    stats["thumbs"] += 1
+                except Exception as exc:
+                    it["thumb_attempts"] = it.get("thumb_attempts", 0) + 1
+                    log.warning("thumbnail failed (%s)", type(exc).__name__)
+                    stats["thumb_errors"] += 1
+
+
+def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
+             stats: dict[str, int]) -> None:
+    if not settings.anthropic_key:
+        log.info("ANTHROPIC_API_KEY not set; skipping classification")
+        return
+    import anthropic
+
+    db = store.db
+    client = anthropic.Anthropic(api_key=settings.anthropic_key, max_retries=3)
+
+    def channel_title(item: dict[str, Any]) -> str:
+        return db["channels"].get(str(item["channel_id"]), {}).get("title", "")
+
+    clf = Classifier(client, tax, settings.classifier_model, store.thumbs_dir, channel_title)
+
+    # 1. Collect finished batches.
+    still_running = []
+    for record in db["batches"]:
+        try:
+            done = clf.collect_batch(record, db["items"])
+        except Exception as exc:
+            log.warning("batch check failed (%s)", type(exc).__name__)
+            done = None
+            if time.time() - record["submitted_at"] > 3 * 86400:
+                done = 0  # give up; items get retried
+        if done is None:
+            still_running.append(record)
+        else:
+            stats["classified"] += done
+    db["batches"] = still_running
+
+    in_batch = {i for b in db["batches"] for i in b["item_ids"]}
+    pending = [it for it in db["items"].values()
+               if it["id"] not in in_batch and needs_classification(it, tax)]
+    # Wait for thumbnails that are still expected, so the image can be used.
+    pending = [it for it in pending
+               if it.get("thumb") or not it.get("preview_message_id")
+               or it.get("thumb_attempts", 0) >= MAX_THUMB_ATTEMPTS]
+    pending.sort(key=lambda it: it["posted_at"], reverse=True)
+    stats["classify_pending"] = len(pending)
+    if not pending:
+        return
+
+    if len(pending) >= settings.batch_threshold:
+        try:
+            record = clf.submit_batch(pending)
+            db["batches"].append(record)
+            stats["batched"] += len(record["item_ids"])
+            return
+        except Exception as exc:
+            log.warning("batch submit failed (%s); falling back to direct calls",
+                        type(exc).__name__)
+    stats["classified"] += clf.classify_now(pending[: settings.max_classifications], deadline)
+
+
+def write_outputs(stats: dict[str, Any]) -> None:
+    log.info("summary %s", " ".join(f"{k}={v}" for k, v in stats.items()))
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as fh:
+            for k, v in stats.items():
+                fh.write(f"{k}={v}\n")
+
+
+def run(mode: str, data_dir: Path) -> int:
+    from collections import defaultdict
+
+    from .build_index import build_library
+
+    setup_logging()
+    started = time.time()
+    settings = Settings.from_env()
+    tax = load_taxonomy()
+    need_tg = mode == "sync"
+    missing = settings.missing(telegram=need_tg)
+    if missing:
+        log.error("missing configuration: %s", ", ".join(missing))
+        return 2
+
+    store = Store(data_dir, settings.site_password, settings.site_password_old)
+    try:
+        store.load()
+    except StoreError as exc:
+        log.error("%s", exc)
+        return 3
+
+    stats: dict[str, Any] = defaultdict(int)
+    deadline = started + settings.time_budget_s
+
+    if mode == "reclassify":
+        for it in store.db["items"].values():
+            it.pop("taxonomy_version", None)
+            it.pop("classify_attempts", None)
+    if mode == "sync":
+        asyncio.run(ingest(settings, store, deadline, stats))
+    if mode in ("sync", "reclassify"):
+        classify(settings, store, tax, deadline, stats)
+
+    # Only show channels that are still configured (a channel removed from TG_CHANNELS
+    # disappears from the site; its data stays in db.enc in case it is added back).
+    active = {int(cid) for cid, ch in store.db["channels"].items()
+              if ch.get("ref") in settings.channels} if settings.channels else None
+    library = build_library(store.db, tax, active)
+    wrote = store.save(library, now=time.time())
+    stats["items_total"] = len(library["items"])
+    stats["changed"] = str(wrote["db"] or wrote["library"]).lower()
+    stats["duration_s"] = int(time.time() - started)
+    write_outputs(dict(stats))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="pipeline")
+    parser.add_argument("mode", choices=["sync", "reclassify", "rebuild"], nargs="?",
+                        default="sync")
+    parser.add_argument("--data-dir", default=os.environ.get("DATA_DIR", "data"))
+    args = parser.parse_args(argv)
+    return run(args.mode, Path(args.data_dir))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

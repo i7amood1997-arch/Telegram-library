@@ -1,0 +1,50 @@
+# Category tree used by the automatic classifier and the website filters.
+# Edit freely, then bump `version` and run the "sync" workflow with mode=reclassify.
+version: 1
+categories:
+  Interior:
+    - Sofas & Armchairs
+    - Chairs & Stools
+    - Tables
+    - Beds
+    - Wardrobes & Storage
+    - Kitchens
+    - Bathrooms & Sanitary
+    - Lighting
+    - Decor & Accessories
+    - Rugs & Curtains
+    - Indoor Plants
+    - Appliances & Electronics
+    - Doors & Windows
+    - Wall & Ceiling Elements
+  Exterior:
+    - Trees & Vegetation
+    - Vehicles
+    - Outdoor Furniture
+    - Buildings & Facades
+    - Street Elements
+    - Landscape & Hardscape
+    - People
+  Scenes:
+    - Interior Scene
+    - Exterior Scene
+styles:
+  - Modern
+  - Contemporary
+  - Minimalist
+  - Classic
+  - Neoclassic
+  - Art Deco
+  - Scandinavian
+  - Industrial
+  - Japandi
+  - Mid-Century
+  - Rustic
+  - Oriental
+  - Other
+render_engines:
+  - Corona
+  - V-Ray
+  - FStorm
+  - Arnold
+  - Unknown
