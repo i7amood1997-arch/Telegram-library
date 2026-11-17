@@ -41,6 +41,8 @@ export type Sort = 'relevance' | 'new' | 'old' | 'title' | 'size';
 
 export interface Filters {
   q: string;
+  /** top-level group (Interior / Exterior / Scenes / Resources) */
+  group: string;
   facets: Record<FacetKey, Set<string>>;
   added: Added;
   thumb: boolean;
