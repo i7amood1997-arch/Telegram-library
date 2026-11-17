@@ -53,6 +53,15 @@ Scheduled runs deploy only when data changed. Manual runs and pushes always depl
 Thumbnails are not encrypted. Their names are `HMAC-SHA256(THUMB_SECRET, item_id)[:24].webp`,
 so they cannot be linked to channels or posts.
 
+### Guest passwords (`library.enc` format v2)
+
+`library.enc` is encrypted with a random 256-bit **content key**. For `SITE_PASSWORD` and each
+line of `GUEST_PASSWORDS` there is a slot holding the content key wrapped with that password's
+PBKDF2 key. All slots share one salt, so the browser derives once and tries each slot cheaply,
+and the slot order is shuffled. Whenever the set of passwords changes, a new content key is
+generated, so a removed guest cannot open the new file even with a remembered key. `db.enc`
+stays format v1 and opens only with `SITE_PASSWORD`.
+
 ## Grouping rules (`pipeline/grouping.py`)
 
 Per channel, messages in ascending id order:

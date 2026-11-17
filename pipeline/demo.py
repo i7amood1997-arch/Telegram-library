@@ -1,5 +1,7 @@
 """Generate a fake, encrypted demo library for local frontend development and tests.
 
+Unlocks with the --password value (default "demo") or the guest password "guest".
+
     python -m pipeline.demo --out web/public/demo --count 400 --password demo
 """
 
@@ -100,7 +102,8 @@ def main() -> None:
     lib = build_library(db, tax)
     salt = crypto.new_salt()
     (out / "library.enc").write_text(
-        crypto.encrypt_json({**lib, "updated_at": now}, args.password, salt), encoding="utf-8")
+        crypto.encrypt_json_multi({**lib, "updated_at": now}, [args.password, "guest"], salt,
+                                  crypto.new_content_key()), encoding="utf-8")
     print(f"demo library: {len(lib['items'])} items -> {out}")
 
 

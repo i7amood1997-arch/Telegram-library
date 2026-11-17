@@ -63,7 +63,7 @@ def test_sync_end_to_end(tmp_path, monkeypatch, capsys):
     install_fakes(monkeypatch, feed)
 
     assert pm.main(["sync", "--data-dir", str(tmp_path)]) == 0
-    lib = crypto.decrypt_json((tmp_path / "library.enc").read_text(), "pw")
+    lib = crypto.decrypt_json_multi((tmp_path / "library.enc").read_text(), "pw")
     assert len(lib["items"]) == 1
     it = lib["items"][0]
     assert it["th"] and (tmp_path / "thumbs" / it["th"]).exists()
@@ -86,7 +86,7 @@ def test_sync_end_to_end(tmp_path, monkeypatch, capsys):
     # A later part arrives in the next run and merges into the same item.
     feed.append(Msg(3, T0 + 9, "archive", file_name="Lovely_Sofa_corona.zip", size=1))
     assert pm.main(["sync", "--data-dir", str(tmp_path)]) == 0
-    lib = crypto.decrypt_json((tmp_path / "library.enc").read_text(), "pw")
+    lib = crypto.decrypt_json_multi((tmp_path / "library.enc").read_text(), "pw")
     assert len(lib["items"]) == 1 and len(lib["items"][0]["f"]) == 2
 
 

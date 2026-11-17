@@ -91,6 +91,7 @@ class Settings:
     anthropic_key: str = ""
     site_password: str = ""
     site_password_old: str = ""
+    guest_passwords: list[str] = field(default_factory=list)
     thumb_secret: str = ""
     classifier_model: str = "claude-haiku-5-5"
     max_classifications: int = 300
@@ -108,6 +109,8 @@ class Settings:
             anthropic_key=_env("ANTHROPIC_API_KEY"),
             site_password=_env("SITE_PASSWORD"),
             site_password_old=_env("SITE_PASSWORD_OLD"),
+            guest_passwords=[g.strip() for g in _env("GUEST_PASSWORDS").splitlines()
+                             if g.strip()],
             thumb_secret=_env("THUMB_SECRET"),
             classifier_model=_env("CLASSIFIER_MODEL") or "claude-haiku-5-5",
             max_classifications=int(_env("MAX_CLASSIFICATIONS_PER_RUN") or 300),

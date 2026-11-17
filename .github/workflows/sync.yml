@@ -76,6 +76,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           SITE_PASSWORD_OLD: ${{ secrets.SITE_PASSWORD_OLD }}
+          GUEST_PASSWORDS: ${{ secrets.GUEST_PASSWORDS }}
           THUMB_SECRET: ${{ secrets.THUMB_SECRET }}
           CLASSIFIER_MODEL: ${{ vars.CLASSIFIER_MODEL }}
           MAX_CLASSIFICATIONS_PER_RUN: ${{ vars.MAX_CLASSIFICATIONS_PER_RUN }}

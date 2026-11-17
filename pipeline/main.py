@@ -239,7 +239,8 @@ def run(mode: str, data_dir: Path) -> int:
         log.error("missing configuration: %s", ", ".join(missing))
         return 2
 
-    store = Store(data_dir, settings.site_password, settings.site_password_old)
+    store = Store(data_dir, settings.site_password, settings.site_password_old,
+                  settings.guest_passwords)
     try:
         store.load()
     except StoreError as exc:
@@ -265,6 +266,7 @@ def run(mode: str, data_dir: Path) -> int:
     library = build_library(store.db, tax, active)
     wrote = store.save(library, now=time.time())
     stats["items_total"] = len(library["items"])
+    stats["site_passwords"] = len(store.site_passwords)
     stats["changed"] = str(wrote["db"] or wrote["library"]).lower()
     stats["duration_s"] = int(time.time() - started)
     write_outputs(dict(stats), channel_report(store, settings) if settings.channels else None)
