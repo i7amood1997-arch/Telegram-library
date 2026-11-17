@@ -27,6 +27,9 @@ from .thumbnails import save_thumb
 log = logging.getLogger("pipeline")
 
 MAX_THUMB_ATTEMPTS = 3
+FETCH_SHARE = 0.4  # share of the time budget for fetching messages
+MAX_MESSAGES_PER_CHANNEL = 5000  # per run, so a huge backlog cannot starve other channels
+CLASSIFY_RESERVE_S = 90  # keep time at the end for classification + saving
 
 
 def setup_logging() -> None:
@@ -37,9 +40,18 @@ def setup_logging() -> None:
 
 async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[str, int]
                  ) -> None:
-    from .telegram_client import ChannelResolver, download_photo, fetch_new, make_client
+    """Fetch new posts for every channel, then download missing thumbnails (newest first).
+
+    Time is split so one huge channel cannot starve the others: fetching gets at most
+    FETCH_SHARE of the budget (divided fairly across channels), thumbnails get the rest.
+    """
+    from .telegram_client import ChannelResolver, download_photos, fetch_new, make_client
 
     db = store.db
+    now = time.time()
+    fetch_deadline = now + (deadline - now) * FETCH_SHARE
+    entities: dict[int, Any] = {}
+    photo_cache: dict[tuple[int, int], Any] = {}
     async with make_client(settings.api_id, settings.api_hash, settings.session) as client:
         resolver = ChannelResolver(client)
         for idx, ref in enumerate(settings.channels):
@@ -50,14 +62,19 @@ async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[
                 stats["channel_errors"] += 1
                 continue
             cid = int(entity.id)
+            entities[cid] = entity
             ch = db["channels"].setdefault(str(cid), {"id": cid, "last_message_id": 0})
             ch["ref"] = ref
             ch["title"] = getattr(entity, "title", "") or ""
             ch["username"] = getattr(entity, "username", None)
-            if time.time() > deadline:
-                continue
 
-            msgs, photo_cache = await fetch_new(client, entity, ch["last_message_id"], deadline)
+            remaining = len(settings.channels) - idx
+            share_deadline = time.time() + max(0.0, fetch_deadline - time.time()) / remaining
+            if time.time() > fetch_deadline:
+                continue
+            msgs, photos = await fetch_new(client, entity, ch["last_message_id"], share_deadline,
+                                           limit=MAX_MESSAGES_PER_CHANNEL)
+            photo_cache.update({(cid, mid): m for mid, m in photos.items()})
             state = db["states"].setdefault(str(cid), new_channel_state())
             result = group_messages(cid, msgs, state, db["items"])
             if msgs:
@@ -66,28 +83,33 @@ async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[
             stats["new_items"] += len(result.new_ids)
             stats["updated_items"] += len(result.updated_ids)
 
-            # Thumbnails for new items, plus retries for earlier failures in this channel.
-            todo = [it for it in db["items"].values()
-                    if it["channel_id"] == cid and it.get("preview_message_id")
-                    and not it.get("thumb")
-                    and it.get("thumb_attempts", 0) < MAX_THUMB_ATTEMPTS]
-            for it in todo:
-                if time.time() > deadline:
-                    break
-                try:
-                    data = await download_photo(client, entity, it["preview_message_id"],
-                                                photo_cache)
-                    if data is None:
-                        it["thumb_attempts"] = MAX_THUMB_ATTEMPTS
-                        continue
-                    it["thumb"] = save_thumb(store.thumbs_dir, settings.thumb_secret, it["id"],
-                                             data)
-                    it.pop("thumb_attempts", None)
-                    stats["thumbs"] += 1
-                except Exception as exc:
-                    it["thumb_attempts"] = it.get("thumb_attempts", 0) + 1
-                    log.warning("thumbnail failed (%s)", type(exc).__name__)
-                    stats["thumb_errors"] += 1
+        # Thumbnails: all channels together, newest models first, downloaded concurrently.
+        todo = [it for it in db["items"].values()
+                if it["channel_id"] in entities and it.get("preview_message_id")
+                and not it.get("thumb") and it.get("thumb_attempts", 0) < MAX_THUMB_ATTEMPTS]
+        todo.sort(key=lambda it: it["posted_at"], reverse=True)
+        stats["thumbs_pending"] = len(todo)
+
+        def on_result(item: dict[str, Any], data: bytes | None, error: str | None) -> None:
+            if error is not None:
+                item["thumb_attempts"] = item.get("thumb_attempts", 0) + 1
+                stats["thumb_errors"] += 1
+                return
+            if data is None:  # preview message deleted or not a photo
+                item["thumb_attempts"] = MAX_THUMB_ATTEMPTS
+                return
+            try:
+                item["thumb"] = save_thumb(store.thumbs_dir, settings.thumb_secret, item["id"],
+                                           data)
+                item.pop("thumb_attempts", None)
+                stats["thumbs"] += 1
+            except Exception as exc:  # undecodable image
+                log.warning("thumbnail failed (%s)", type(exc).__name__)
+                item["thumb_attempts"] = item.get("thumb_attempts", 0) + 1
+                stats["thumb_errors"] += 1
+
+        await download_photos(client, entities, todo, photo_cache, deadline - CLASSIFY_RESERVE_S,
+                              on_result)
 
 
 def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
