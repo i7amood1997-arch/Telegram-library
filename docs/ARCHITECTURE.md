@@ -7,9 +7,10 @@ GitHub Actions "Sync library" (cron */30, manual, push to main)
   1. checkout main → ./app, data branch → ./data (git worktree)
   2. python -m pipeline.main sync --data-dir ../data
        Store.load()          decrypt data/db.enc (SITE_PASSWORD, falls back to SITE_PASSWORD_OLD)
-       ingest()              Telethon: per channel, messages with id > last_message_id (ascending);
-                             fetching gets ≤ 40% of the budget, shared fairly across channels,
-                             and ≤ 5000 messages per channel per run
+       ingest()              Telethon, per channel, NEWEST FIRST (pipeline/backfill.py):
+                             new posts above the head first, then unread history ("gaps")
+                             top-down; ≤ 5000 messages per channel per run, fetching gets
+                             ≤ 40% of the budget shared fairly across channels
          group_messages()    photos + archives → model items (pure, see grouping.py)
          thumbnails          all channels together, newest first, 6 concurrent downloads of the
                              smallest stored size ≥ 320px → WebP → data/thumbs/<hmac>.webp.
@@ -107,3 +108,14 @@ labelled only by position in `TG_CHANNELS`:
 ```
 channel#3 items=5210 with_preview=5190 thumbs=4100 thumbs_gave_up=0 classified=3900
 ```
+
+## Newest-first sync (`pipeline/backfill.py`)
+
+Each channel stores its head (`last_message_id`) and a list of unread history ranges
+(`gaps`, each with the grouping state at its lower end). A run reads the head first; if the new
+posts do not fit in the per-run limit, the unread remainder becomes a gap. Leftover budget
+fills gaps from the top down. Chunks are grouped in ascending order, and at every chunk boundary
+`link_orphans` repairs what the boundary cut: it merges the next part of a split archive into
+its first part, and gives a preview-less model the nearest unclaimed photo just below it.
+`tests/test_backfill.py` checks that any chunk size yields exactly the same items as reading
+the channel in one go.
