@@ -1,4 +1,4 @@
-// Product-style model card used by every grid and row.
+// Model card: preview with depth tilt + sheen, glass heart, title and specs underneath.
 import { el, formatSize, icon } from './dom';
 import type { Saved } from './saved';
 import type { Item } from './types';
@@ -10,6 +10,9 @@ export interface CardContext {
   open: (item: Item) => void;
 }
 
+const canHover = typeof matchMedia === 'function' && matchMedia('(hover: hover)').matches;
+const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 export function metaLine(item: Item): string {
   const parts = [];
   if (item.g === 'Resources') parts.push(item.c);
@@ -19,13 +22,27 @@ export function metaLine(item: Item): string {
   return parts.join(' · ');
 }
 
-export function media(item: Item, ctx: CardContext, cls = 'card-media'): HTMLElement {
+/** Subtle 3D tilt that follows the pointer, with a moving highlight. */
+export function tilt(node: HTMLElement): void {
+  if (!canHover || reduceMotion) return;
+  node.addEventListener('pointermove', (e) => {
+    const r = node.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width;
+    const py = (e.clientY - r.top) / r.height;
+    node.style.transform = `perspective(900px) rotateX(${(0.5 - py) * 7}deg) rotateY(${(px - 0.5) * 9}deg)`;
+    node.style.setProperty('--mx', `${px * 100}%`);
+    node.style.setProperty('--my', `${py * 100}%`);
+  });
+  node.addEventListener('pointerleave', () => { node.style.transform = ''; });
+}
+
+export function preview(item: Item, ctx: CardContext, cls = 'pv'): HTMLElement {
   const box = el('div', { class: cls });
   if (item.th) {
     const img = el('img', { src: ctx.thumbUrl(item.th), alt: '', decoding: 'async', draggable: 'false', loading: 'lazy' });
-    img.addEventListener('load', () => box.classList.add('loaded'), { once: true });
+    img.addEventListener('load', () => img.classList.add('ready'), { once: true });
     img.addEventListener('error', () => box.classList.add('broken'), { once: true });
-    box.append(img);
+    box.append(img, el('span', { class: 'shimmer' }));
   } else {
     box.classList.add('empty');
     box.append(icon(item.g === 'Resources' ? 'layers' : 'cube', 34));
@@ -33,11 +50,11 @@ export function media(item: Item, ctx: CardContext, cls = 'card-media'): HTMLEle
   return box;
 }
 
-export function favButton(item: Item, ctx: CardContext): HTMLButtonElement {
+export function favButton(item: Item, ctx: CardContext, cls = 'heart glass'): HTMLButtonElement {
   const on = ctx.saved.isFavorite(item.id);
   const btn = el('button', {
-    class: 'fav', type: 'button', 'data-fav': item.id, 'aria-pressed': String(on),
-    'aria-label': on ? 'Remove from favorites' : 'Add to favorites',
+    class: cls, type: 'button', 'data-fav': item.id, 'aria-pressed': String(on),
+    'aria-label': on ? `Remove ${item.t} from Favorites` : `Add ${item.t} to Favorites`,
   }, icon('heart', 17));
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -49,27 +66,26 @@ export function favButton(item: Item, ctx: CardContext): HTMLButtonElement {
 /** Keep every heart on screen in sync after favorites change anywhere. */
 export function syncFavButtons(saved: Saved): void {
   document.querySelectorAll<HTMLButtonElement>('[data-fav]').forEach((b) => {
-    const on = saved.isFavorite(b.dataset.fav!);
-    b.setAttribute('aria-pressed', String(on));
-    b.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+    b.setAttribute('aria-pressed', String(saved.isFavorite(b.dataset.fav!)));
   });
 }
 
 export function card(item: Item, ctx: CardContext): HTMLElement {
-  const m = media(item, ctx);
+  const pv = preview(item, ctx, 'pv tilt');
+  tilt(pv);
   const badges = el('div', { class: 'badges' },
-    ctx.isNew(item) ? el('span', { class: 'badge badge-new' }, 'New') : null,
-    item.col ? el('span', { class: 'badge' }, 'Pack') : null,
-    item.f.length > 1 ? el('span', { class: 'badge' }, `${item.f.length} parts`) : null,
+    ctx.isNew(item) ? el('span', { class: 'badge glass' }, 'New') : null,
+    item.col ? el('span', { class: 'badge glass' }, 'Pack') : null,
+    item.f.length > 1 ? el('span', { class: 'badge glass' }, `${item.f.length} parts`) : null,
   );
-  m.append(badges);
   return el('article', { class: 'card', role: 'listitem' },
-    m,
+    pv,
+    badges,
     favButton(item, ctx),
-    el('div', { class: 'card-body' },
+    el('div', { class: 'card-text' },
       el('h3', { class: 'card-title' },
         el('button', { class: 'card-hit', type: 'button', onclick: () => ctx.open(item) }, item.t)),
-      el('div', { class: 'card-meta' }, metaLine(item)),
+      el('p', { class: 'card-meta' }, metaLine(item)),
     ),
   );
 }
