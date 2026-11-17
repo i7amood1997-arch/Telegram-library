@@ -39,7 +39,7 @@ def install_fakes(monkeypatch, feed):
 
     async def download_photos(client, entities, items, cache, deadline, on_result):
         for it in items:
-            on_result(it, _jpeg(), None)
+            on_result(it, _jpeg(), "ok")
 
     monkeypatch.setattr(tc, "make_client", lambda *a: FakeClient())
     monkeypatch.setattr(tc.ChannelResolver, "resolve", resolve)
@@ -111,8 +111,8 @@ def test_best_photo_size_picks_smallest_large_enough():
     sizes = [SimpleNamespace(type="s", w=90, h=67), SimpleNamespace(type="m", w=320, h=240),
              SimpleNamespace(type="x", w=800, h=600), SimpleNamespace(type="y", w=1280, h=960),
              SimpleNamespace(type="i")]  # stripped size without dimensions
-    assert tc.best_photo_size(SimpleNamespace(sizes=sizes)).type == "x"
-    assert tc.best_photo_size(SimpleNamespace(sizes=sizes[:2])).type == "m"
+    assert tc.best_photo_size(SimpleNamespace(sizes=sizes)).type == "m"
+    assert tc.best_photo_size(SimpleNamespace(sizes=sizes[:1])).type == "s"
 
 
 def test_download_photos_prefetches_and_reports(monkeypatch):
@@ -141,8 +141,8 @@ def test_download_photos_prefetches_and_reports(monkeypatch):
     asyncio.run(tc.download_photos(Client(), {1: object()}, items, cache, _time.time() + 60,
                                    lambda it, d, e: results.__setitem__(it["id"], (d, e))))
     assert calls["get"] == 1 and calls["download"] == 2
-    assert results == {"1:10": (b"img", None), "1:11": (b"img", None),
-                       "1:50": (None, None), "1:99": (None, None)}
+    assert results == {"1:10": (b"img", "ok"), "1:11": (b"img", "ok"),
+                       "1:50": (None, "missing"), "1:99": (None, "missing")}
 
 
 def test_download_photos_respects_deadline():
@@ -156,3 +156,67 @@ def test_download_photos_respects_deadline():
     asyncio.run(tc.download_photos(Client(), {1: object()},
                                    [{"id": "1:1", "channel_id": 1, "preview_message_id": 1}],
                                    {}, _time.time() - 1, lambda *a: None))
+
+
+def test_rate_limit_stops_downloads_without_counting_failures():
+    import asyncio
+    import time as _time
+
+    from telethon.errors import FloodPremiumWaitError
+
+    photo = SimpleNamespace(sizes=[SimpleNamespace(w=320, h=240)])
+
+    class Client:
+        downloads = 0
+
+        async def get_messages(self, entity, ids):
+            return [SimpleNamespace(id=i, photo=photo) for i in ids]
+
+        async def download_media(self, msg, file, thumb):
+            Client.downloads += 1
+            if Client.downloads >= 3:
+                raise FloodPremiumWaitError(request=None, capture=900)
+            return b"img"
+
+    items = [{"id": f"1:{i}", "channel_id": 1, "preview_message_id": i} for i in range(300)]
+    results = []
+    limited = asyncio.run(tc.download_photos(Client(), {1: object()}, items, {},
+                                             _time.time() + 60,
+                                             lambda it, d, st: results.append(st)))
+    assert limited is True
+    assert "missing" not in results and all(st == "ok" for st in results)
+    assert len(results) < 10  # stopped right away, nothing else attempted
+
+
+def test_migration_resets_attempts_and_thumb_triggers_reclassify(tmp_path, monkeypatch):
+    env(monkeypatch)
+    feed = [Msg(1, T0, "photo"), Msg(2, T0 + 5, "archive", file_name="a.rar", size=1)]
+    install_fakes(monkeypatch, feed)
+
+    # Seed a DB that looks like the buggy version left it: no thumb, attempts exhausted,
+    # classified from text only.
+    from pipeline.store import Store
+
+    st = Store(tmp_path, "pw")
+    st.load()
+    st.db["channels"]["777"] = {"id": 777, "last_message_id": 2, "ref": "777"}
+    st.db["items"]["777:2"] = {
+        "id": "777:2", "channel_id": 777, "message_ids": [2], "preview_message_id": 1,
+        "files": [{"name": "a.rar", "size": 1, "ext": "rar", "part": None, "msg_id": 2}],
+        "caption": "", "posted_at": T0, "thumb_attempts": 3,
+        "classification": {"title": "A", "group": "Interior", "category": "Tables",
+                           "style": "Other", "render_engine": "Unknown"},
+        "taxonomy_version": 1, "cls_img": False,
+    }
+    from pipeline.build_index import build_library
+    from pipeline.config import load_taxonomy
+
+    st.save(build_library(st.db, load_taxonomy()), now=1)
+
+    assert pm.main(["sync", "--data-dir", str(tmp_path)]) == 0
+    st2 = Store(tmp_path, "pw")
+    st2.load()
+    item = st2.db["items"]["777:2"]
+    assert item["thumb"] and "thumb_attempts" not in item
+    assert "taxonomy_version" not in item  # queued for classification with the image
+    assert "thumb_attempts_reset_v1" in st2.db["migrations"]

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodError, FloodWaitError
 from telethon.sessions import StringSession
 
 from .grouping import Msg, is_archive
@@ -87,7 +87,7 @@ async def fetch_new(
 
 DOWNLOAD_CONCURRENCY = 6
 PREFETCH_CHUNK = 100
-THUMB_MIN_EDGE = 480
+THUMB_MIN_EDGE = 320  # Telegram's 'm' size; small = fast for non-Premium accounts
 
 
 def best_photo_size(photo: Any) -> Any | None:
@@ -120,43 +120,56 @@ async def download_photos(
     items: list[dict[str, Any]],
     cache: dict[tuple[int, int], Any],
     deadline: float,
-    on_result: Callable[[dict[str, Any], bytes | None, str | None], None],
-) -> None:
+    on_result: Callable[[dict[str, Any], bytes | None, str], None],
+) -> bool:
     """Download preview photos concurrently until the deadline.
 
-    on_result(item, data, error): data=None and error=None means "no photo available".
+    on_result(item, data, status) with status:
+      "ok"       data holds the image
+      "missing"  the preview message is gone or has no photo (permanent)
+      "<Error>"  a real download failure (counts as an attempt)
+    Rate limits (FloodWait / FloodPremiumWait) are never reported as failures: Telethon
+    already sleeps through short ones, and a long one stops downloading for this run so the
+    remaining items are simply retried next time. Returns True if stopped by a rate limit.
     """
     sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+    stop = asyncio.Event()
 
     async def one(item: dict[str, Any]) -> None:
         async with sem:
-            if time.time() > deadline:
+            if stop.is_set() or time.time() > deadline:
                 return
             msg = cache.get((item["channel_id"], item["preview_message_id"]))
             if msg is None or getattr(msg, "photo", None) is None:
-                on_result(item, None, None)
+                on_result(item, None, "missing")
                 return
             try:
                 data = await client.download_media(msg, file=bytes,
                                                    thumb=best_photo_size(msg.photo))
-                on_result(item, data if isinstance(data, bytes) and data else None,
-                          None if data else "empty")
-            except FloodWaitError as exc:
-                log.warning("flood wait %ss during downloads", exc.seconds)
-                if exc.seconds <= MAX_FLOOD_WAIT:
-                    await asyncio.sleep(exc.seconds)
-                on_result(item, None, "flood")
+            except FloodError as exc:
+                log.warning("rate limited (%s, %ss); stopping downloads for this run",
+                            type(exc).__name__, getattr(exc, "seconds", "?"))
+                stop.set()
+                return
             except Exception as exc:
-                log.warning("download failed (%s)", type(exc).__name__)
                 on_result(item, None, type(exc).__name__)
+                return
+            if isinstance(data, bytes) and data:
+                on_result(item, data, "ok")
+            else:
+                on_result(item, None, "EmptyDownload")
 
     for start in range(0, len(items), PREFETCH_CHUNK):
-        if time.time() > deadline:
+        if stop.is_set() or time.time() > deadline:
             break
         chunk = items[start:start + PREFETCH_CHUNK]
         try:
             await _prefetch(client, entities, chunk, cache)
+        except FloodError as exc:
+            log.warning("rate limited on prefetch (%s); stopping downloads", type(exc).__name__)
+            break
         except Exception as exc:
             log.warning("prefetch failed (%s)", type(exc).__name__)
             continue
         await asyncio.gather(*(one(it) for it in chunk))
+    return stop.is_set()

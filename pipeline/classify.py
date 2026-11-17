@@ -20,7 +20,7 @@ log = logging.getLogger("pipeline.classify")
 PROMPT_VERSION = 1
 TOOL_NAME = "record_classification"
 MAX_TOKENS = 700
-BATCH_MAX_ITEMS = 2000
+BATCH_MAX_ITEMS = 4000
 
 SYSTEM_PROMPT = """\
 You catalogue 3ds Max models for an architectural visualization artist. Each model comes from \
@@ -230,6 +230,7 @@ def _apply(item: dict[str, Any], raw: dict[str, Any] | None, tax: Taxonomy) -> b
             item["classification"] = normalize(raw, tax, hints)
             item["taxonomy_version"] = tax.version
             item["prompt_version"] = PROMPT_VERSION
+            item["cls_img"] = bool(item.get("thumb"))
             item.pop("classify_attempts", None)
             return True
         except (ValidationError, ValueError, TypeError):
