@@ -129,6 +129,9 @@
 **Settings ← Secrets and variables ← Actions ← Variables ← New variable**
 بالاسم `CLASSIFIER_MODEL` والقيمة `claude-sonnet-5-5`.
 
+### التحديث المتسلسل (بدل جدولة GitHub)
+GitHub أحياناً يتجاهل التشغيل المجدول. عشان كذا كل تشغيل يبدأ اللي بعده تلقائياً بعد حوالي ٣٠ دقيقة من بدايته. لإيقافه مؤقتاً: **Settings ← Secrets and variables ← Actions ← Variables ← New variable** بالاسم `AUTO_SYNC` والقيمة `off`. لإرجاعه احذف المتغير وشغّل **Sync library** مرة وحدة يدوياً.
+
 ### إذا وقف التحديث التلقائي
 GitHub يوقف الجدولة إذا ما صار أي نشاط على المستودع ٦٠ يوم. هذا نادر هنا، لأن كل موديل جديد يسوي commit. بس لو صار: **Actions ← Sync library ← Enable workflow**.
 
