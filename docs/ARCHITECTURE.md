@@ -7,9 +7,12 @@ GitHub Actions "Sync library" (cron */30, manual, push to main)
   1. checkout main → ./app, data branch → ./data (git worktree)
   2. python -m pipeline.main sync --data-dir ../data
        Store.load()          decrypt data/db.enc (SITE_PASSWORD, falls back to SITE_PASSWORD_OLD)
-       ingest()              Telethon: per channel, messages with id > last_message_id (ascending)
+       ingest()              Telethon: per channel, messages with id > last_message_id (ascending);
+                             fetching gets ≤ 40% of the budget, shared fairly across channels,
+                             and ≤ 5000 messages per channel per run
          group_messages()    photos + archives → model items (pure, see grouping.py)
-         thumbnails          download preview photo → 480px WebP → data/thumbs/<hmac>.webp
+         thumbnails          all channels together, newest first, 6 concurrent downloads of the
+                             smallest stored size ≥ 480px → WebP → data/thumbs/<hmac>.webp
        classify()            collect finished Claude batches; submit a new batch (≥ 40 pending)
                              or classify directly (capped per run)
        build_library()       slim browser index

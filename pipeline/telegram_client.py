@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from telethon import TelegramClient
@@ -84,12 +85,78 @@ async def fetch_new(
     return msgs, photos
 
 
-async def download_photo(client: TelegramClient, entity: Any, msg_id: int,
-                         cache: dict[int, Any]) -> bytes | None:
-    message = cache.get(msg_id)
-    if message is None:
-        message = await client.get_messages(entity, ids=msg_id)
-    if message is None or message.photo is None:
-        return None
-    data = await client.download_media(message, file=bytes)
-    return data if isinstance(data, bytes) else None
+DOWNLOAD_CONCURRENCY = 6
+PREFETCH_CHUNK = 100
+THUMB_MIN_EDGE = 480
+
+
+def best_photo_size(photo: Any) -> Any | None:
+    """Smallest stored size that is still >= THUMB_MIN_EDGE (avoids downloading originals)."""
+    sizes = [s for s in getattr(photo, "sizes", []) or []
+             if getattr(s, "w", None) and getattr(s, "h", None)]
+    big = [s for s in sizes if max(s.w, s.h) >= THUMB_MIN_EDGE]
+    if big:
+        return min(big, key=lambda s: s.w * s.h)
+    return max(sizes, key=lambda s: s.w * s.h, default=None)
+
+
+async def _prefetch(client: TelegramClient, entities: dict[int, Any],
+                    items: list[dict[str, Any]], cache: dict[tuple[int, int], Any]) -> None:
+    """Load preview messages not seen in this run, 100 ids per request."""
+    missing: dict[int, list[int]] = {}
+    for it in items:
+        key = (it["channel_id"], it["preview_message_id"])
+        if key not in cache:
+            missing.setdefault(key[0], []).append(key[1])
+    for cid, ids in missing.items():
+        msgs = await client.get_messages(entities[cid], ids=ids)
+        for mid, m in zip(ids, msgs, strict=False):
+            cache[(cid, mid)] = m  # None when the message was deleted
+
+
+async def download_photos(
+    client: TelegramClient,
+    entities: dict[int, Any],
+    items: list[dict[str, Any]],
+    cache: dict[tuple[int, int], Any],
+    deadline: float,
+    on_result: Callable[[dict[str, Any], bytes | None, str | None], None],
+) -> None:
+    """Download preview photos concurrently until the deadline.
+
+    on_result(item, data, error): data=None and error=None means "no photo available".
+    """
+    sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+
+    async def one(item: dict[str, Any]) -> None:
+        async with sem:
+            if time.time() > deadline:
+                return
+            msg = cache.get((item["channel_id"], item["preview_message_id"]))
+            if msg is None or getattr(msg, "photo", None) is None:
+                on_result(item, None, None)
+                return
+            try:
+                data = await client.download_media(msg, file=bytes,
+                                                   thumb=best_photo_size(msg.photo))
+                on_result(item, data if isinstance(data, bytes) and data else None,
+                          None if data else "empty")
+            except FloodWaitError as exc:
+                log.warning("flood wait %ss during downloads", exc.seconds)
+                if exc.seconds <= MAX_FLOOD_WAIT:
+                    await asyncio.sleep(exc.seconds)
+                on_result(item, None, "flood")
+            except Exception as exc:
+                log.warning("download failed (%s)", type(exc).__name__)
+                on_result(item, None, type(exc).__name__)
+
+    for start in range(0, len(items), PREFETCH_CHUNK):
+        if time.time() > deadline:
+            break
+        chunk = items[start:start + PREFETCH_CHUNK]
+        try:
+            await _prefetch(client, entities, chunk, cache)
+        except Exception as exc:
+            log.warning("prefetch failed (%s)", type(exc).__name__)
+            continue
+        await asyncio.gather(*(one(it) for it in chunk))
