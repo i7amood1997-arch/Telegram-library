@@ -3,6 +3,7 @@
 import io
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image
 
 from pipeline import crypto
@@ -221,3 +222,33 @@ def test_migration_resets_attempts_and_thumb_triggers_reclassify(tmp_path, monke
     assert item["thumb"] and "thumb_attempts" not in item
     assert "taxonomy_version" not in item  # queued for classification with the image
     assert "thumb_attempts_reset_v1" in st2.db["migrations"]
+
+
+# ---------- guests managed from the workflow ----------
+
+def test_add_and_remove_guest_via_modes(tmp_path, monkeypatch):
+    env(monkeypatch)
+    install_fakes(monkeypatch, [Msg(1, T0, "photo"),
+                                Msg(2, T0 + 5, "archive", file_name="a.rar", size=1)])
+    assert pm.main(["sync", "--data-dir", str(tmp_path)]) == 0
+
+    monkeypatch.setenv("GUEST_NAME", "Friend")
+    assert pm.main(["add-guest", "--data-dir", str(tmp_path)]) == 0
+    owner = crypto.decrypt_json((tmp_path / "owner.enc").read_text(), "pw")
+    assert [g["name"] for g in owner["guests"]] == ["Friend"]
+    guest_pw = owner["guests"][0]["password"]
+    assert len(guest_pw) == 19 and guest_pw.count("-") == 3
+
+    lib = (tmp_path / "library.enc").read_text()
+    assert crypto.decrypt_json_multi(lib, guest_pw)["items"]
+    assert crypto.decrypt_json_multi(lib, "pw")["items"]
+    with pytest.raises(crypto.DecryptionError):  # guests cannot read the share list
+        crypto.decrypt_json((tmp_path / "owner.enc").read_text(), guest_pw)
+
+    assert pm.main(["add-guest", "--data-dir", str(tmp_path)]) == 4  # duplicate name
+    assert pm.main(["remove-guest", "--data-dir", str(tmp_path)]) == 0
+    lib = (tmp_path / "library.enc").read_text()
+    with pytest.raises(crypto.DecryptionError):
+        crypto.decrypt_json_multi(lib, guest_pw)
+    assert crypto.decrypt_json((tmp_path / "owner.enc").read_text(), "pw")["guests"] == []
+    assert pm.main(["remove-guest", "--data-dir", str(tmp_path)]) == 4  # already gone

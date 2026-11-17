@@ -250,6 +250,19 @@ def run(mode: str, data_dir: Path) -> int:
     stats: dict[str, Any] = defaultdict(int)
     deadline = started + settings.time_budget_s
 
+    if mode in ("add-guest", "remove-guest"):
+        from .guests import GuestError, add_guest, remove_guest
+
+        try:
+            if mode == "add-guest":
+                add_guest(store.db, settings.guest_name)
+                stats["guest_added"] = 1
+            elif not remove_guest(store.db, settings.guest_name):
+                log.error("no guest with that name")
+                return 4
+        except GuestError as exc:
+            log.error("%s", exc)
+            return 4
     if mode == "reclassify":
         for it in store.db["items"].values():
             it.pop("taxonomy_version", None)
@@ -267,6 +280,7 @@ def run(mode: str, data_dir: Path) -> int:
     wrote = store.save(library, now=time.time())
     stats["items_total"] = len(library["items"])
     stats["site_passwords"] = len(store.site_passwords)
+    stats["guests"] = len(store.db.get("guests", []))
     stats["changed"] = str(wrote["db"] or wrote["library"]).lower()
     stats["duration_s"] = int(time.time() - started)
     write_outputs(dict(stats), channel_report(store, settings) if settings.channels else None)
@@ -275,7 +289,8 @@ def run(mode: str, data_dir: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline")
-    parser.add_argument("mode", choices=["sync", "reclassify", "rebuild"], nargs="?",
+    parser.add_argument("mode", nargs="?",
+                        choices=["sync", "reclassify", "rebuild", "add-guest", "remove-guest"],
                         default="sync")
     parser.add_argument("--data-dir", default=os.environ.get("DATA_DIR", "data"))
     args = parser.parse_args(argv)

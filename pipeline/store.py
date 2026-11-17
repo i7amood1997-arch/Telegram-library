@@ -13,6 +13,7 @@ from . import crypto
 
 DB_FILE = "db.enc"
 LIBRARY_FILE = "library.enc"
+OWNER_FILE = "owner.enc"  # owner-only: guest passwords to share (SITE_PASSWORD, format v1)
 THUMBS_DIR = "thumbs"
 
 
@@ -43,12 +44,17 @@ class Store:
         self.data_dir = Path(data_dir)
         self.password = password
         self.old_password = old_password
-        # Owner first; guests unlock the same published library but never db.enc.
-        self.site_passwords = list(dict.fromkeys([password, *[g for g in guest_passwords if g]]))
+        self.secret_guest_passwords = [g for g in guest_passwords if g]
         self.db: dict[str, Any] = empty_db()
         self.salt: bytes = crypto.new_salt()
         self._loaded_hash = ""
         self.rotated = False
+
+    @property
+    def site_passwords(self) -> list[str]:
+        """Owner first; guests (from the secret and from db.enc) open library.enc only."""
+        db_guests = [g["password"] for g in self.db.get("guests", [])]
+        return list(dict.fromkeys([self.password, *self.secret_guest_passwords, *db_guests]))
 
     @property
     def thumbs_dir(self) -> Path:
@@ -118,6 +124,14 @@ class Store:
                 {**library_payload, "updated_at": now}, self.site_passwords, self.salt,
                 content_key))
             wrote_library = True
+        from .guests import owner_payload
+
+        owner = owner_payload(self.db, len(self.secret_guest_passwords))
+        owner_hash = _canonical_hash(owner) + self.salt.hex()
+        if (owner_hash != self.db.get("owner_hash") or self.rotated
+                or not (self.data_dir / OWNER_FILE).exists()):
+            self._write(OWNER_FILE, owner)
+            self.db["owner_hash"] = owner_hash
         wrote_db = False
         if _canonical_hash(self.db) != self._loaded_hash:
             self._write(DB_FILE, self.db)
