@@ -1,21 +1,20 @@
-import '@fontsource-variable/manrope/wght.css';
+import '@fontsource-variable/inter/wght.css';
 import './style.css';
 import { syncFavButtons } from './cards';
 import { b64decode, b64encode, decryptWithKey, deriveKey, parseEnvelope } from './crypto.js';
 import { type AppCtx, type View } from './ctx';
 import { indexLibrary } from './data';
-import { debounce, el, icon, safeLocal, safeSession, storage } from './dom';
+import { el, icon, safeLocal, safeSession, storage } from './dom';
 import {
   createCollectionPicker, createDetail, createLightbox, createShareDialog, createToaster,
 } from './overlays';
 import { Saved } from './saved';
 import { SearchIndex } from './search';
-import { attachSuggest } from './suggest';
+import { createSpotlight } from './spotlight';
 import type { Item, Library, OwnerInfo } from './types';
 import { browseView } from './views/browse';
 import { homeView } from './views/home';
 import { savedListView, savedOverview } from './views/saved';
-import { suggestionHref } from './views/shared';
 
 // ---------------------------------------------------------------------------------------------
 // Data location & persistence keys
@@ -28,6 +27,7 @@ const SAVED_STORE = DEMO ? 'tl.saved.demo' : 'tl.saved';
 const LAST_VISIT = 'tl.lastVisit';
 const NEW_SINCE = 'tl.newSince';
 const THEME = 'tl.theme';
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const app = document.getElementById('app')!;
 type Envelope = ReturnType<typeof parseEnvelope>;
@@ -187,7 +187,7 @@ function migrateLegacyUrl(): void {
 type Route =
   | { name: 'home' }
   | { name: 'browse'; params: URLSearchParams }
-  | { name: 'saved' }
+  | { name: 'saved'; params: URLSearchParams }
   | { name: 'saved-list'; which: string }
   | { name: 'item'; id: string };
 
@@ -196,7 +196,7 @@ function parseRoute(hash: string): Route {
   const [path, query = ''] = h.split('?');
   if (path.startsWith('/m/')) return { name: 'item', id: decodeURIComponent(path.slice(3)) };
   if (path === '/browse') return { name: 'browse', params: new URLSearchParams(query) };
-  if (path === '/saved') return { name: 'saved' };
+  if (path === '/saved') return { name: 'saved', params: new URLSearchParams(query) };
   if (path.startsWith('/saved/')) return { name: 'saved-list', which: decodeURIComponent(path.slice(7)) };
   return { name: 'home' };
 }
@@ -234,31 +234,27 @@ function startApp(lib: Library, key: Uint8Array): void {
       syncHeader();
     },
     toast,
+    openSearch: () => {},
     pickCollections: (item) => picker(item),
   };
   const picker = createCollectionPicker(() => ctx);
   const detail = createDetail(() => ctx, lightbox);
 
-  // Header ---------------------------------------------------------------------------------------
-  const headerSearch = el('input', { type: 'search', id: 'header-search', class: 'search-input', autocomplete: 'off', spellcheck: 'false', placeholder: 'Search models, tags, files…', 'aria-label': 'Search' });
-  attachSuggest(headerSearch, idx, (s) => {
-    if (s.kind === 'search' && currentView?.setQuery) { currentView.setQuery(s.q); return; }
-    headerSearch.blur();
-    headerSearch.value = s.kind === 'tag' ? s.label : '';
-    ctx.go(suggestionHref(s));
-  });
-  const liveQuery = debounce((q: string) => currentView?.setQuery?.(q), 160);
-  headerSearch.addEventListener('input', () => liveQuery(headerSearch.value));
+  // Floating glass navigation ---------------------------------------------------------------------
+  const spotlight = createSpotlight(() => ctx);
+  ctx.openSearch = (q?: string) => spotlight.open(q);
 
-  const navLinks = [...idx.groups.filter((g) => g !== 'Uncategorized').map((g) => ({ label: g, href: `#/browse?g=${encodeURIComponent(g)}`, g })),
-    { label: 'New', href: '#/browse?added=7d&sort=new', g: '__new' }];
-  const nav = el('nav', { class: 'main-nav', 'aria-label': 'Groups' },
-    navLinks.map((n) => el('a', { href: n.href, 'data-nav': n.g }, n.label)));
+  const groups = idx.groups.filter((g) => g !== 'Uncategorized');
+  const seg = el('div', { class: 'seg nav-seg', role: 'group', 'aria-label': 'Groups' }, el('span', { class: 'seg-pill', 'aria-hidden': 'true' }));
+  for (const g of ['All', ...groups]) {
+    seg.append(el('a', { href: g === 'All' ? '#/browse' : `#/browse?g=${encodeURIComponent(g)}`, 'data-g': g === 'All' ? '' : g }, g));
+  }
+  const pill = seg.querySelector<HTMLElement>('.seg-pill')!;
 
-  const savedCount = el('span', { class: 'count-badge', hidden: true });
-  const savedLink = el('a', { class: 'icon-btn with-badge', href: '#/saved', 'aria-label': 'Saved models', title: 'Saved' }, icon('heart'), savedCount);
-  const themeBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Switch theme', title: 'Switch theme' });
-  const setThemeIcon = () => themeBtn.replaceChildren(icon(currentTheme() === 'dark' ? 'sun' : 'moon'));
+  const savedCount = el('span', { class: 'badge-count', hidden: true });
+  const savedLink = el('a', { class: 'icon-btn hide-sm', href: '#/saved', 'aria-label': 'Saved', title: 'Saved' }, icon('heart', 19), savedCount);
+  const themeBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Switch appearance', title: 'Switch appearance' });
+  const setThemeIcon = () => themeBtn.replaceChildren(icon(currentTheme() === 'dark' ? 'sun' : 'moon', 19));
   setThemeIcon();
   themeBtn.addEventListener('click', () => {
     const next = currentTheme() === 'dark' ? 'light' : 'dark';
@@ -266,35 +262,46 @@ function startApp(lib: Library, key: Uint8Array): void {
     storage.set(safeLocal(), THEME, next);
     setThemeIcon();
   });
-  const shareBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Share access', title: 'Share access', hidden: true }, icon('users'));
-  const lockBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Lock', title: 'Lock library', onclick: () => { forgetKey(); location.reload(); } }, icon('lock'));
+  const shareBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Share access', title: 'Share access', hidden: true }, icon('users', 19));
+  const lockBtn = el('button', { class: 'icon-btn hide-sm', type: 'button', 'aria-label': 'Lock', title: 'Lock library', onclick: () => { forgetKey(); location.reload(); } }, icon('lock', 19));
+  const searchBtn = el('button', { class: 'search-btn', type: 'button', 'aria-label': 'Search', onclick: () => spotlight.open() },
+    icon('search', 15), el('span', {}, 'Search'), el('kbd', {}, isMac ? '⌘K' : 'Ctrl K'));
 
-  const header = el('header', { class: 'topbar' },
-    el('div', { class: 'topbar-inner' },
-      el('a', { class: 'brand', href: '#/' }, brandMark(18), el('span', { class: 'brand-name' }, 'Model Library')),
-      nav,
-      el('div', { class: 'header-search' }, icon('search', 18), headerSearch, el('kbd', { class: 'kbd' }, '/')),
-      el('div', { class: 'header-actions' }, savedLink, shareBtn, themeBtn, lockBtn)));
+  const header = el('header', { class: 'nav glass' },
+    el('a', { class: 'logo', href: '#/' }, brandMark(15), el('span', { class: 'hide-sm' }, 'Library')),
+    seg, searchBtn, savedLink, shareBtn, themeBtn, lockBtn);
 
-  const bottom = el('nav', { class: 'bottom-nav', 'aria-label': 'Sections' },
-    el('a', { href: '#/', 'data-tab': 'home' }, icon('home', 20), el('span', {}, 'Home')),
-    el('a', { href: '#/browse', 'data-tab': 'browse' }, icon('grid', 20), el('span', {}, 'Browse')),
-    el('a', { href: '#/saved', 'data-tab': 'saved' }, icon('heart', 20), el('span', {}, 'Saved')));
+  const tab = (key: string, label: string, ico: string, href: string | null) => href
+    ? el('a', { href, 'data-tab': key }, icon(ico, 22), el('span', {}, label))
+    : el('button', { type: 'button', 'data-tab': key, onclick: () => spotlight.open() }, icon(ico, 22), el('span', {}, label));
+  const bottom = el('nav', { class: 'tabbar glass', 'aria-label': 'Sections' },
+    tab('home', 'Home', 'home', '#/'), tab('browse', 'Browse', 'grid', '#/browse'), tab('search', 'Search', 'search', null), tab('saved', 'Saved', 'heart', '#/saved'));
 
   const main = el('main', { class: 'main', id: 'main' });
   app.replaceChildren(header, main, bottom);
+
+  function placePill(): void {
+    const on = seg.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!on) { pill.style.opacity = '0'; return; }
+    pill.style.opacity = '1';
+    pill.style.left = `${on.offsetLeft}px`;
+    pill.style.width = `${on.offsetWidth}px`;
+  }
+  window.addEventListener('resize', placePill);
 
   function syncHeader(): void {
     const r = parseRoute(lastViewHash);
     document.body.dataset.view = r.name;
     const p = r.name === 'browse' ? r.params : null;
-    const navKey = p ? (p.get('added') === '7d' && !p.get('g') ? '__new' : p.get('g') ?? '') : '';
-    nav.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
-    const tab = r.name === 'saved' || r.name === 'saved-list' ? 'saved' : r.name === 'browse' ? 'browse' : 'home';
-    bottom.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => {
-      if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    seg.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => {
+      const on = !!p && !p.get('q') && (p.get('g') ?? '') === a.dataset.g;
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
-    if (document.activeElement !== headerSearch) headerSearch.value = p?.get('q') ?? '';
+    placePill();
+    const tabKey = r.name === 'saved' || r.name === 'saved-list' ? 'saved' : r.name === 'browse' ? 'browse' : 'home';
+    bottom.querySelectorAll<HTMLElement>('[data-tab]').forEach((a) => {
+      if (a.dataset.tab === tabKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
   }
 
   function syncSavedCount(): void {
@@ -307,7 +314,7 @@ function startApp(lib: Library, key: Uint8Array): void {
     const r = parseRoute(hash);
     currentView?.destroy?.();
     currentView = r.name === 'browse' ? browseView(ctx, r.params)
-      : r.name === 'saved' ? savedOverview(ctx)
+      : r.name === 'saved' ? savedOverview(ctx, r.params)
         : r.name === 'saved-list' ? savedListView(ctx, r.which)
           : homeView(ctx);
     currentKey = hash;
@@ -330,6 +337,7 @@ function startApp(lib: Library, key: Uint8Array): void {
       return;
     }
     if (detail.isOpen) detail.close();
+    if (spotlight.isOpen()) spotlight.close();
     itemPushed = false;
     if (hash !== currentKey) renderView(hash);
   }
@@ -340,10 +348,13 @@ function startApp(lib: Library, key: Uint8Array): void {
 
   document.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement;
-    if (e.key === '/' && !t.matches('input, textarea, select') && !document.querySelector('dialog[open]')) {
+    const typing = t.matches('input, textarea, select');
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
-      const target = document.body.dataset.view === 'home' ? document.getElementById('home-search') : headerSearch;
-      (target as HTMLInputElement | null)?.focus();
+      if (spotlight.isOpen()) spotlight.close(); else spotlight.open();
+    } else if (e.key === '/' && !typing && !document.querySelector('dialog[open]')) {
+      e.preventDefault();
+      spotlight.open();
     }
   });
 

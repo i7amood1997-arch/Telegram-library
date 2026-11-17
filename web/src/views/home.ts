@@ -1,111 +1,136 @@
-// Home: search, categories by group, new this week, collections.
-import { card } from '../cards';
+// Home: editorial hero with a featured carousel, new this week, bento categories, collections.
+import { card, metaLine, preview, tilt } from '../cards';
 import { browseHref, type AppCtx, type View } from '../ctx';
 import { el, icon, relativeTime } from '../dom';
-import { attachSuggest } from '../suggest';
-import { suggestionHref } from './shared';
+import type { Item } from '../types';
 
 const WEEK = 7 * 86400;
 
+/** Newest items with previews, one per category, for the hero carousel. */
+function featured(ctx: AppCtx, n: number): Item[] {
+  const seen = new Set<string>();
+  const out: Item[] = [];
+  for (const it of ctx.idx.items) {
+    if (!it.th || seen.has(it.c) || it.g === 'Uncategorized') continue;
+    seen.add(it.c);
+    out.push(it);
+    if (out.length === n) break;
+  }
+  return out;
+}
+
 export function homeView(ctx: AppCtx): View {
   const { idx } = ctx;
-  const total = idx.items.length;
   const now = Date.now() / 1000;
+  const total = idx.items.length;
+  const fresh = idx.items.filter((i) => i.d >= now - WEEK);
+  const withPreview = idx.items.filter((i) => i.th).length;
 
-  // Hero --------------------------------------------------------------------------------------
-  const search = el('input', {
-    type: 'search', id: 'home-search', class: 'hero-input', autocomplete: 'off', spellcheck: 'false',
-    placeholder: 'Sofa, olive tree, oak texture, HDRI…', 'aria-label': 'Search the library',
+  // Hero ------------------------------------------------------------------------------------------
+  const picks = featured(ctx, 5);
+  const slides = picks.map((it, i) => {
+    const s = el('div', { class: `slide${i === 0 ? ' on' : ''}` });
+    s.append(el('img', { src: ctx.thumbUrl(it.th!), alt: it.t, decoding: 'async' }));
+    return s;
   });
-  attachSuggest(search, idx, (s) => ctx.go(suggestionHref(s)));
-  const popular = [...idx.categories.values()].filter((c) => c.group !== 'Uncategorized')
-    .sort((a, b) => b.count - a.count).slice(0, 6);
+  const dots = el('div', { class: 'dots', 'aria-hidden': 'true' }, picks.map((_, i) => el('i', { class: i === 0 ? 'on' : '' })));
+  const capTitle = el('b');
+  const capMeta = el('span', { class: 'cap-meta' });
+  let current = 0;
+  const show = (i: number) => {
+    if (!picks.length) return;
+    current = (i + picks.length) % picks.length;
+    slides.forEach((s, k) => s.classList.toggle('on', k === current));
+    [...dots.children].forEach((d, k) => d.classList.toggle('on', k === current));
+    capTitle.textContent = picks[current].t;
+    capMeta.textContent = `${picks[current].c} · ${metaLine(picks[current])}`;
+  };
+  show(0);
+  const stage = el('div', { class: 'stage' }, slides, picks.length > 1 ? dots : null,
+    picks.length ? el('div', { class: 'cap glass' },
+      el('div', { class: 'cap-text' }, el('small', {}, 'Featured'), capTitle, capMeta),
+      el('button', { class: 'pill primary sm', type: 'button', onclick: () => ctx.open(picks[current]) }, 'View')) : el('div', { class: 'stage-empty' }, icon('cube', 48)));
+  tilt(stage);
+  const timer = window.setInterval(() => {
+    if (!stage.isConnected) { window.clearInterval(timer); return; }
+    if (!stage.matches(':hover') && !document.hidden) show(current + 1);
+  }, 5200);
+
   const hero = el('section', { class: 'hero' },
-    el('p', { class: 'eyebrow' }, `${total.toLocaleString('en')} models · ${idx.lib.channels.length} channels · updated ${relativeTime(ctx.updatedAt)}`),
-    el('h1', {}, 'Find the right model for your next render'),
-    el('div', { class: 'hero-search' }, icon('search', 20), search),
-    el('div', { class: 'quick' },
-      el('span', { class: 'quick-label' }, 'Popular'),
-      popular.map((c) => el('a', { class: 'pill', href: browseHref({ g: c.group, cat: c.name }) }, c.name))),
-  );
+    el('div', { class: 'hero-text' },
+      el('span', { class: 'eyebrow' }, el('i', { class: 'live' }), `Updated ${relativeTime(ctx.updatedAt)}${fresh.length ? ` · ${fresh.length.toLocaleString('en')} new this week` : ''}`),
+      el('h1', {}, 'Every model.', el('br'), el('span', { class: 'fade' }, 'One library.')),
+      el('p', { class: 'lede' }, `${idx.lib.channels.length} Telegram channels, sorted into one place. Find a sofa, an olive tree or an HDRI, then open the post in a tap.`),
+      el('div', { class: 'cta' },
+        el('a', { class: 'pill primary', href: '#/browse' }, 'Browse the library'),
+        el('button', { class: 'pill secondary', type: 'button', onclick: () => ctx.openSearch() }, 'Search', el('kbd', {}, '⌘K'))),
+      el('div', { class: 'stats' },
+        el('div', { class: 'stat' }, el('b', {}, total.toLocaleString('en')), el('span', {}, 'models')),
+        el('div', { class: 'stat' }, el('b', {}, String(idx.lib.channels.length)), el('span', {}, 'channels')),
+        el('div', { class: 'stat' }, el('b', {}, `${total ? Math.round((withPreview / total) * 100) : 0}%`), el('span', {}, 'with previews')))),
+    stage);
 
-  // Categories by group -------------------------------------------------------------------------
-  const tabs = el('div', { class: 'tabs tabs-scroll', role: 'tablist', 'aria-label': 'Category groups' });
-  const tiles = el('div', { class: 'cat-grid', role: 'tabpanel' });
-  const groups = idx.groups.filter((g) => (idx.categoriesByGroup.get(g) ?? []).length);
-  const showGroup = (g: string) => {
-    [...tabs.children].forEach((t) => t.setAttribute('aria-selected', String((t as HTMLElement).dataset.g === g)));
-    const cats = idx.categoriesByGroup.get(g) ?? [];
-    tiles.replaceChildren(...cats.map((c) => {
-      const cover = el('div', { class: 'cat-cover' });
-      if (c.cover?.th) cover.append(el('img', { src: ctx.thumbUrl(c.cover.th), alt: '', loading: 'lazy', decoding: 'async' }));
-      else cover.append(icon(g === 'Resources' ? 'layers' : 'cube', 30));
-      return el('a', { class: 'cat-tile', href: browseHref({ g, cat: c.name }) },
-        cover,
-        el('span', { class: 'cat-name' }, c.name),
-        el('span', { class: 'cat-count' }, `${c.count.toLocaleString('en')} ${c.count === 1 ? 'model' : 'models'}`));
-    }));
+  // New this week -----------------------------------------------------------------------------------
+  const shelfItems = (fresh.length ? fresh : idx.items).filter((i) => i.th).slice(0, 16);
+  const newSec = el('section', { class: 'sec' },
+    el('div', { class: 'sec-head' },
+      el('div', {}, el('h2', {}, fresh.length ? 'New this week' : 'Latest additions'), el('p', {}, 'Fresh from your channels, newest first.')),
+      el('a', { class: 'link', href: browseHref({ added: '7d', sort: 'new' }) }, 'See all', icon('chevron-right', 16))),
+    el('div', { class: 'shelf', role: 'list' }, shelfItems.map((i) => card(i, ctx))));
+
+  // Bento categories --------------------------------------------------------------------------------
+  const cats = [...idx.categories.values()].filter((c) => c.cover && c.group !== 'Uncategorized').sort((a, b) => b.count - a.count);
+  const pickCats = cats.slice(0, 9);
+  // Sizes repeat in a pattern that keeps every row full on a 4-column grid.
+  const sizes = ['big', '', '', 'wide', '', '', '', '', 'wide'];
+  const tiles = pickCats.map((c, i) => {
+    const tile = el('a', { class: `tile ${sizes[i] ?? ''}`, href: browseHref({ g: c.group, cat: c.name }) },
+      preview(c.cover!, ctx, 'pv tile-img'),
+      el('span', { class: 'tile-label glass' }, el('b', {}, c.name), el('span', {}, `${c.count.toLocaleString('en')} models`)));
+    return tile;
+  });
+  const totalCats = idx.categories.size;
+  tiles.push(el('a', { class: `tile all-tile${pickCats.length === 9 ? ' wide' : ''}`, href: '#/browse' },
+    el('span', { class: 'all-label' }, el('b', {}, `All ${totalCats} categories`), el('span', {}, idx.groups.join(', '))),
+    el('span', { class: 'all-arrow', 'aria-hidden': 'true' }, icon('chevron-right', 40))));
+  const catSec = el('section', { class: 'sec' },
+    el('div', { class: 'sec-head' }, el('div', {}, el('h2', {}, 'Browse by category'), el('p', {}, 'Sorted automatically from every post.'))),
+    el('div', { class: 'bento' }, tiles));
+
+  // Collections -------------------------------------------------------------------------------------
+  const colSec = el('section', { class: 'sec' });
+  const renderCols = () => {
+    colSec.replaceChildren(
+      el('div', { class: 'sec-head' },
+        el('div', {}, el('h2', {}, 'Your collections'), el('p', {}, 'Models saved for each project.')),
+        el('a', { class: 'link', href: '#/saved' }, 'All saved', icon('chevron-right', 16))),
+      collectionsRow(ctx, 3));
   };
-  for (const g of groups) {
-    const n = (idx.categoriesByGroup.get(g) ?? []).reduce((s, c) => s + c.count, 0);
-    tabs.append(el('button', { class: 'tab', type: 'button', role: 'tab', 'data-g': g, onclick: () => showGroup(g) },
-      g, el('span', { class: 'tab-count' }, n.toLocaleString('en'))));
-  }
-  if (groups.length) showGroup(groups[0]);
+  renderCols();
+  const unsub = ctx.saved.subscribe(renderCols);
 
-  const categories = el('section', { class: 'block' },
-    el('div', { class: 'block-head' },
-      el('h2', {}, 'Browse by category'),
-      el('a', { class: 'more', href: '#/browse' }, 'All models', icon('arrow', 16))),
-    tabs, tiles);
-
-  // New this week -------------------------------------------------------------------------------
-  let fresh = idx.items.filter((i) => i.d >= now - WEEK);
-  const freshLabel = fresh.length ? 'New this week' : 'Latest additions';
-  if (!fresh.length) fresh = idx.items.slice(0, 20);
-  const newRow = el('section', { class: 'block' },
-    el('div', { class: 'block-head' },
-      el('h2', {}, freshLabel, fresh.length > 1 ? el('span', { class: 'head-count' }, fresh.length.toLocaleString('en')) : null),
-      el('a', { class: 'more', href: browseHref({ added: '7d', sort: 'new' }) }, 'See all', icon('arrow', 16))),
-    el('div', { class: 'row-scroll', role: 'list' }, fresh.slice(0, 18).map((i) => card(i, ctx))),
-  );
-
-  // Collections -----------------------------------------------------------------------------------
-  const collectionsBlock = el('section', { class: 'block', hidden: true });
-  const renderCollections = () => {
-    const cols = ctx.saved.collections;
-    const favs = ctx.saved.favorites;
-    collectionsBlock.hidden = !cols.length && !favs.length;
-    if (collectionsBlock.hidden) return;
-    collectionsBlock.replaceChildren(
-      el('div', { class: 'block-head' },
-        el('h2', {}, 'Your saved models'),
-        el('a', { class: 'more', href: '#/saved' }, 'Manage', icon('arrow', 16))),
-      el('div', { class: 'col-grid' },
-        favs.length ? collectionTile(ctx, 'Favorites', favs, '#/saved/fav', true) : null,
-        cols.slice(0, 7).map((c) => collectionTile(ctx, c.name, c.items, `#/saved/${c.id}`, false))));
-  };
-  renderCollections();
-  const unsub = ctx.saved.subscribe(renderCollections);
-
-  // Styles ----------------------------------------------------------------------------------------
-  const styles = [...idx.styleCounts.entries()].filter(([s]) => s !== 'Other').sort((a, b) => b[1] - a[1]);
-  const stylesBlock = styles.length ? el('section', { class: 'block' },
-    el('div', { class: 'block-head' }, el('h2', {}, 'Browse by style')),
-    el('div', { class: 'style-list' }, styles.map(([s, n]) =>
-      el('a', { class: 'style-chip', href: browseHref({ style: s }) }, s, el('span', {}, n.toLocaleString('en')))))) : null;
-
-  const root = el('div', { class: 'page home' }, hero, collectionsBlock, newRow, categories, stylesBlock);
-  return { el: root, destroy: unsub };
+  return { el: el('div', { class: 'view wrap' }, hero, newSec, catSec, colSec), destroy: unsub };
 }
 
 export function collectionTile(ctx: AppCtx, name: string, ids: readonly string[], href: string, fav: boolean): HTMLElement {
-  const covers = ids.map((id) => ctx.idx.byId.get(id)).filter((i) => i?.th).slice(0, 4);
+  const covers = ids.map((id) => ctx.idx.byId.get(id)).filter((i): i is Item => !!i?.th).slice(0, 3);
   const mosaic = el('div', { class: `mosaic n${covers.length}` },
-    covers.length ? covers.map((i) => el('img', { src: ctx.thumbUrl(i!.th!), alt: '', loading: 'lazy' }))
-      : el('span', { class: 'mosaic-empty' }, icon(fav ? 'heart' : 'folder', 28)));
-  return el('a', { class: 'col-tile', href },
+    covers.length ? covers.map((i) => el('div', {}, el('img', { src: ctx.thumbUrl(i.th!), alt: '', loading: 'lazy' })))
+      : el('span', { class: 'mosaic-empty' }, icon(fav ? 'heart' : 'folder', 30)));
+  return el('a', { class: 'col', href },
     mosaic,
-    el('span', { class: 'col-name' }, fav ? el('span', { class: 'col-fav' }, icon('heart', 15)) : null, name),
-    el('span', { class: 'col-count' }, `${ids.length} ${ids.length === 1 ? 'model' : 'models'}`));
+    el('b', {}, fav ? el('span', { class: 'col-fav' }, icon('heart', 15)) : null, name),
+    el('span', {}, `${ids.length} ${ids.length === 1 ? 'model' : 'models'}`));
+}
+
+/** Favorites + up to `limit` collections + a "New collection" tile. */
+export function collectionsRow(ctx: AppCtx, limit = Infinity): HTMLElement {
+  const cols = ctx.saved.collections.slice(0, limit);
+  const newTile = el('a', { class: 'col', href: '#/saved?new=1' },
+    el('div', { class: 'mosaic new-col' }, icon('plus', 40)),
+    el('b', {}, 'New collection'), el('span', {}, 'For your next project'));
+  return el('div', { class: 'cols' },
+    collectionTile(ctx, 'Favorites', ctx.saved.favorites, '#/saved/fav', true),
+    cols.map((c) => collectionTile(ctx, c.name, c.items, `#/saved/${c.id}`, false)),
+    newTile);
 }

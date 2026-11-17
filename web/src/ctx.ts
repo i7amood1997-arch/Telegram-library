@@ -11,6 +11,7 @@ export interface AppCtx extends CardContext {
   /** Update the current route's query without adding history. */
   replace: (hash: string) => void;
   toast: (message: string) => void;
+  openSearch: (q?: string) => void;
   pickCollections: (item: Item) => void;
   updatedAt: number;
 }

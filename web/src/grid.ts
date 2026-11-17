@@ -3,9 +3,9 @@ import { card, type CardContext } from './cards';
 import type { Item } from './types';
 
 const BUFFER_PX = 900;
-// Card = 4:3 image + fixed text block. Phones get two columns.
+// Card = 4:3 preview + fixed text block. Phones get two columns.
 const metrics = (width: number) =>
-  width < 640 ? { min: 150, gap: 12, info: 62 } : { min: 214, gap: 20, info: 66 };
+  width < 640 ? { min: 150, gap: 12, info: 58 } : { min: 250, gap: 22, info: 66 };
 
 export class VirtualGrid {
   private items: Item[] = [];
