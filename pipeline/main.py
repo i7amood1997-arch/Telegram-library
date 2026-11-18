@@ -374,7 +374,14 @@ def run(mode: str, data_dir: Path) -> int:
         if store.thumbs_dir.exists() and not _has_oversized(store.thumbs_dir):
             store.db["migrations"].append("thumbs_shrunk_v1")
     if mode == "sync":
-        asyncio.run(ingest(settings, store, deadline, stats))
+        # Hard stop: a stalled Telegram connection must never block saving and publishing.
+        # Progress made so far is already in store.db and is kept.
+        limit = max(60.0, deadline - time.time() - CLASSIFY_RESERVE_S)
+        try:
+            asyncio.run(asyncio.wait_for(ingest(settings, store, deadline, stats), limit))
+        except TimeoutError:
+            log.warning("Telegram sync stopped at the time limit; continuing with what was fetched")
+            stats["ingest_timed_out"] = 1
     if mode in ("sync", "reclassify"):
         classify(settings, store, tax, deadline, stats)
 
