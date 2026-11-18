@@ -136,7 +136,7 @@ export function createDetail(ctx: () => AppCtx, lightbox: (src: string, alt: str
     if (item.th) {
       const src = c.thumbUrl(item.th);
       media = el('button', { class: 'd-img', type: 'button', 'aria-label': 'View full screen', onclick: () => lightbox(src, item.t) },
-        preview(item, c, 'pv d-pv'), el('span', { class: 'zoomhint glass' }, icon('expand', 14), 'Full screen'));
+        preview(item, c, 'pv d-pv'), el('span', { class: 'zoomhint frost' }, icon('expand', 14), 'Full screen'));
     } else {
       media = el('div', { class: 'd-img' }, preview(item, c, 'pv d-pv'));
     }

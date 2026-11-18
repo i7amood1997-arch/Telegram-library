@@ -101,6 +101,7 @@ export function createSpotlight(getCtx: () => AppCtx): { open: (q?: string) => v
   });
 
   function open(q = ''): void {
+    void getCtx().search.warm();
     const wasOpen = !wrap.hidden;
     wrap.hidden = false;
     if (!wasOpen) input.value = q;

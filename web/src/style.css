@@ -70,6 +70,9 @@ p { margin: 0; }
 .small { font-size: 13px; }
 .wrap { max-width: 1280px; margin: 0 auto; padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
 .glass { background: var(--glass); backdrop-filter: blur(28px) saturate(1.8); -webkit-backdrop-filter: blur(28px) saturate(1.8); box-shadow: var(--shadow); border: .5px solid var(--glass-edge); }
+/* Frost: the glass look without a live blur, for small elements repeated on every card.
+   Each backdrop blur costs graphics memory on iPhone; only the nav and dialogs keep it. */
+.frost { background: var(--glass-strong); border: .5px solid var(--glass-edge); box-shadow: 0 6px 16px -8px rgb(0 0 0 / .3); }
 .glass-strong { background: var(--glass-strong); backdrop-filter: blur(30px) saturate(1.8); -webkit-backdrop-filter: blur(30px) saturate(1.8); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
@@ -164,7 +167,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .cap small { font-size: 11px; color: var(--ink-2); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .cap b { font: 600 17px/1.25 var(--display); letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap-meta { font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dots { position: absolute; top: 18px; right: 20px; z-index: 2; display: flex; gap: 6px; padding: 6px 8px; border-radius: 99px; background: rgb(0 0 0 / .18); backdrop-filter: blur(10px); }
+.dots { position: absolute; top: 18px; right: 20px; z-index: 2; display: flex; gap: 6px; padding: 6px 8px; border-radius: 99px; background: rgb(0 0 0 / .28); }
 .dots i { width: 6px; height: 6px; border-radius: 3px; background: rgb(255 255 255 / .55); transition: width .5s var(--spring), background .3s; }
 .dots i.on { width: 18px; background: #fff; }
 
@@ -191,12 +194,12 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .pv img.ready { opacity: 1; }
 /* Studio tile: renders on white are shown whole, floating on a soft tile. */
 .cutout { background: var(--studio) !important; isolation: isolate; }
-.pv.cutout img, .stage .slide.cutout img, .mosaic > div.cutout img, .face.cutout img { object-fit: contain; mix-blend-mode: multiply; filter: brightness(1.04) contrast(1.06); }
+.pv.cutout img, .stage .slide.cutout img, .mosaic > div.cutout img, .face.cutout img { object-fit: contain; mix-blend-mode: multiply; }
 .pv.cutout img { padding: 3%; }
 .pv.cutout::before { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; box-shadow: inset 0 0 0 .5px var(--studio-edge); pointer-events: none; }
 .stage .slide.cutout { background: var(--studio); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .bright img { filter: brightness(.86); } }
-:root[data-theme='dark'] .bright img { filter: brightness(.86); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .bright img.ready { opacity: .86; } }
+:root[data-theme='dark'] .bright img.ready { opacity: .86; }
 .stage .slide.cutout img { padding: 2% 6% 17%; }
 .mosaic > div.cutout img { padding: 8%; }
 .d-pv.cutout img { padding: 2%; }
@@ -205,7 +208,8 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .shimmer { position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / .22) 50%, transparent 70%); background-size: 250% 100%; animation: sh 1.6s linear infinite; }
 @keyframes sh { from { background-position: 150% 0; } to { background-position: -100% 0; } }
 .pv img.ready + .shimmer, .pv.broken .shimmer { display: none; }
-.tilt { transition: transform .6s var(--spring), box-shadow .5s var(--ease); will-change: transform; }
+.tilt { transition: transform .6s var(--spring), box-shadow .5s var(--ease); }
+@media (hover: hover) and (pointer: fine) { .card:hover .tilt { will-change: transform; } }
 .tilt::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s; background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgb(255 255 255 / .32), transparent 45%); mix-blend-mode: soft-light; }
 .card:hover .tilt { box-shadow: var(--shadow-lift); }
 .card:hover .tilt::after { opacity: 1; }
@@ -237,7 +241,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .tile-label { position: absolute; left: 14px; bottom: 14px; z-index: 1; display: flex; flex-direction: column; padding: 10px 14px; border-radius: 16px; max-width: calc(100% - 28px); }
 .tile-label b { font: 700 17px/1.2 var(--display); letter-spacing: -0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-label span { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.tile-label.glass { background: var(--glass-strong); }
+
 .tile.big { grid-column: span 2; grid-row: span 2; }
 .tile.big .tile-label { left: 20px; bottom: 20px; padding: 14px 18px; }
 .tile.big .tile-label b { font-size: 26px; }
