@@ -106,3 +106,42 @@ def test_lite_classifier_groups_items(tmp_path):
     done = LiteClassifier(client, TAX, "m", tmp_path).classify_now(items, deadline=1e12)
     assert done == 20
     assert calls == [8, 8, 4]  # 3 requests instead of 20
+
+
+def test_api_errors_do_not_burn_attempts(tmp_path):
+    calls = []
+
+    class BadRequest(Exception):
+        status_code = 400
+        body = {"error": {"message": "Your credit balance is too low"}}
+
+    def create(**req):
+        calls.append(1)
+        raise BadRequest()
+
+    client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    items = [item(iid=f"1:{i}") for i in range(80)]
+    assert LiteClassifier(client, TAX, "m", tmp_path).classify_now(items, deadline=1e12) == 0
+    assert len(calls) == 3  # stops early instead of sending every group
+    assert all("classify_attempts" not in it and "classification" not in it for it in items)
+
+
+def test_thumbs_shrink_and_ai_image(tmp_path):
+    from PIL import Image
+
+    from pipeline.config import AI_IMAGE_EDGE, THUMB_MAX_EDGE
+    from pipeline.thumbnails import ai_image, shrink_thumbs
+
+    big = tmp_path / "a.webp"
+    Image.effect_noise((480, 360), 60).convert("RGB").save(big, "WEBP", quality=70)
+    small = tmp_path / "b.webp"
+    Image.new("RGB", (200, 150), "red").save(small, "WEBP")
+    small_bytes = small.read_bytes()
+    n, saved = shrink_thumbs(tmp_path, deadline=1e12)
+    assert n == 1 and saved > 0
+    with Image.open(big) as im:
+        assert max(im.size) == THUMB_MAX_EDGE
+    assert small.read_bytes() == small_bytes
+    import io
+    with Image.open(io.BytesIO(ai_image(big, AI_IMAGE_EDGE))) as im:
+        assert max(im.size) == AI_IMAGE_EDGE

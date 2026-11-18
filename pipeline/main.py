@@ -29,6 +29,22 @@ MAX_THUMB_ATTEMPTS = 5
 FETCH_SHARE = 0.4  # share of the time budget for fetching messages
 MAX_MESSAGES_PER_CHANNEL = 5000  # per run, so a huge backlog cannot starve other channels
 CLASSIFY_RESERVE_S = 90  # keep time at the end for classification + saving
+SHRINK_BUDGET_S = 8 * 60  # one-time thumbnail shrink, spread over runs if needed
+
+
+def _has_oversized(thumbs_dir: Path) -> bool:
+    from PIL import Image
+
+    from .config import THUMB_MAX_EDGE
+
+    for p in thumbs_dir.glob("*.webp"):
+        try:
+            with Image.open(p) as img:
+                if max(img.size) > THUMB_MAX_EDGE:
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 def setup_logging() -> None:
@@ -223,8 +239,10 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
             stats["batched"] += len(record["item_ids"])
             return
         except Exception as exc:
+            from .lite import api_error_text
+
             log.warning("batch submit failed (%s); falling back to direct calls",
-                        type(exc).__name__)
+                        api_error_text(exc))
     stats["classified"] += lite.classify_now(pending[: settings.max_classifications], deadline)
 
 
@@ -311,6 +329,16 @@ def run(mode: str, data_dir: Path) -> int:
             if it.get("prompt_version") in (None, "rules"):
                 it.pop("taxonomy_version", None)
                 it.pop("classify_attempts", None)
+    if mode in ("sync", "rebuild") and "thumbs_shrunk_v1" not in store.db.setdefault(
+            "migrations", []):
+        # Older thumbnails were 480px; the site outgrew GitHub Pages' 1 GB limit.
+        from .thumbnails import shrink_thumbs
+
+        n, saved = shrink_thumbs(store.thumbs_dir, time.time() + SHRINK_BUDGET_S)
+        stats["thumbs_shrunk"] = n
+        stats["thumbs_saved_mb"] = saved // 1_000_000
+        if store.thumbs_dir.exists() and not _has_oversized(store.thumbs_dir):
+            store.db["migrations"].append("thumbs_shrunk_v1")
     if mode == "sync":
         asyncio.run(ingest(settings, store, deadline, stats))
     if mode in ("sync", "reclassify"):
