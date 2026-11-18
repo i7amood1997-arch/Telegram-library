@@ -36,11 +36,64 @@ export function tilt(node: HTMLElement): void {
   node.addEventListener('pointerleave', () => { node.style.transform = ''; });
 }
 
+// Studio look: most previews are product renders on a white background. Those are shown whole
+// (contain) on a soft studio tile; full scenes and photos keep filling the frame (cover).
+const lightCache = new Map<string, number>();
+let probe: CanvasRenderingContext2D | null | undefined;
+const PROBE = 16;
+
+/** Share of the image border that is plain white (0..1). */
+function lightEdge(img: HTMLImageElement): number {
+  const key = img.currentSrc || img.src;
+  const known = lightCache.get(key);
+  if (known !== undefined) return known;
+  let result = 0;
+  try {
+    if (probe === undefined) {
+      const c = document.createElement('canvas');
+      c.width = c.height = PROBE;
+      probe = c.getContext('2d', { willReadFrequently: true });
+    }
+    if (probe && img.naturalWidth) {
+      probe.clearRect(0, 0, PROBE, PROBE);
+      probe.drawImage(img, 0, 0, PROBE, PROBE);
+      const d = probe.getImageData(0, 0, PROBE, PROBE).data;
+      let edge = 0;
+      let light = 0;
+      for (let y = 0; y < PROBE; y++) {
+        for (let x = 0; x < PROBE; x++) {
+          if (x > 0 && x < PROBE - 1 && y > 0 && y < PROBE - 1) continue;
+          const i = (y * PROBE + x) * 4;
+          const lo = Math.min(d[i], d[i + 1], d[i + 2]);
+          const hi = Math.max(d[i], d[i + 1], d[i + 2]);
+          edge++;
+          if (lo > 226 && hi - lo < 20) light++;
+        }
+      }
+      result = light / edge;
+    }
+  } catch { result = 0; }
+  lightCache.set(key, result);
+  return result;
+}
+
+/** Mark `box` as a studio tile (cut-out render) or a bright photo, then fade the image in. */
+export function studio(img: HTMLImageElement, box: HTMLElement): void {
+  const done = () => {
+    const light = lightEdge(img);
+    if (light >= 0.7) box.classList.add('cutout');
+    else if (light >= 0.3) box.classList.add('bright');
+    img.classList.add('ready');
+  };
+  if (img.complete && img.naturalWidth) done();
+  else img.addEventListener('load', done, { once: true });
+}
+
 export function preview(item: Item, ctx: CardContext, cls = 'pv'): HTMLElement {
   const box = el('div', { class: cls });
   if (item.th) {
     const img = el('img', { src: ctx.thumbUrl(item.th), alt: '', decoding: 'async', draggable: 'false', loading: 'lazy' });
-    img.addEventListener('load', () => img.classList.add('ready'), { once: true });
+    studio(img, box);
     img.addEventListener('error', () => box.classList.add('broken'), { once: true });
     box.append(img, el('span', { class: 'shimmer' }));
   } else {

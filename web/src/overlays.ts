@@ -2,7 +2,7 @@
 import { card, favButton, preview } from './cards';
 import { browseHref, type AppCtx } from './ctx';
 import { similarItems } from './data';
-import { el, formatDate, formatSize, icon, relativeTime } from './dom';
+import { edgeFade, el, formatDate, formatSize, icon, relativeTime } from './dom';
 import type { Item, OwnerInfo } from './types';
 
 /** A <dialog> that animates out before closing (Escape, backdrop and buttons all use it). */
@@ -88,6 +88,11 @@ export function createCollectionPicker(ctx: () => AppCtx): (item: Item) => void 
     render();
     d.showModal();
   };
+}
+
+function fadeShelf(node: HTMLElement): HTMLElement {
+  edgeFade(node);
+  return node;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -181,7 +186,7 @@ export function createDetail(ctx: () => AppCtx, lightbox: (src: string, alt: str
         )),
       similar.length ? el('section', { class: 'd-similar' },
         el('div', { class: 'sec-head' }, el('h2', {}, 'You might also like'), link('See all', browseHref({ g: item.g, cat: item.c }))),
-        el('div', { class: 'shelf', role: 'list' }, similar.map((it) => card(it, simCtx)))) : null,
+        fadeShelf(el('div', { class: 'shelf', role: 'list' }, similar.map((it) => card(it, simCtx))))) : null,
     ].filter(Boolean) as Node[]));
     if (!d.open) d.showModal();
     d.scrollTop = 0;

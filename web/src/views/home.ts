@@ -1,5 +1,5 @@
 // Home: editorial hero with a featured carousel, new this week, bento categories, collections.
-import { card, metaLine, preview, tilt } from '../cards';
+import { card, metaLine, preview, studio, tilt } from '../cards';
 import { browseHref, type AppCtx, type View } from '../ctx';
 import { el, icon, relativeTime } from '../dom';
 import type { Item } from '../types';
@@ -24,13 +24,15 @@ export function homeView(ctx: AppCtx): View {
   const now = Date.now() / 1000;
   const total = idx.items.length;
   const fresh = idx.items.filter((i) => i.d >= now - WEEK);
-  const withPreview = idx.items.filter((i) => i.th).length;
+  const catCount = [...idx.categories.values()].filter((c) => c.group !== 'Uncategorized').length;
 
   // Hero ------------------------------------------------------------------------------------------
   const picks = featured(ctx, 5);
   const slides = picks.map((it, i) => {
     const s = el('div', { class: `slide${i === 0 ? ' on' : ''}` });
-    s.append(el('img', { src: ctx.thumbUrl(it.th!), alt: it.t, decoding: 'async' }));
+    const img = el('img', { src: ctx.thumbUrl(it.th!), alt: it.t, decoding: 'async' });
+    studio(img, s);
+    s.append(img);
     return s;
   });
   const dots = el('div', { class: 'dots', 'aria-hidden': 'true' }, picks.map((_, i) => el('i', { class: i === 0 ? 'on' : '' })));
@@ -67,7 +69,7 @@ export function homeView(ctx: AppCtx): View {
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('b', {}, total.toLocaleString('en')), el('span', {}, 'models')),
         el('div', { class: 'stat' }, el('b', {}, String(idx.lib.channels.length)), el('span', {}, 'channels')),
-        el('div', { class: 'stat' }, el('b', {}, `${total ? Math.round((withPreview / total) * 100) : 0}%`), el('span', {}, 'with previews')))),
+        el('div', { class: 'stat' }, el('b', {}, String(catCount)), el('span', {}, 'categories')))),
     stage);
 
   // New this week -----------------------------------------------------------------------------------
@@ -76,7 +78,7 @@ export function homeView(ctx: AppCtx): View {
     el('div', { class: 'sec-head' },
       el('div', {}, el('h2', {}, fresh.length ? 'New this week' : 'Latest additions'), el('p', {}, 'Fresh from your channels, newest first.')),
       el('a', { class: 'link', href: browseHref({ added: '7d', sort: 'new' }) }, 'See all', icon('chevron-right', 16))),
-    el('div', { class: 'shelf', role: 'list' }, shelfItems.map((i) => card(i, ctx))));
+    el('div', { class: 'shelf bleed', role: 'list' }, shelfItems.map((i) => card(i, ctx))));
 
   // Bento categories --------------------------------------------------------------------------------
   const cats = [...idx.categories.values()].filter((c) => c.cover && c.group !== 'Uncategorized').sort((a, b) => b.count - a.count);
@@ -89,10 +91,21 @@ export function homeView(ctx: AppCtx): View {
       el('span', { class: 'tile-label glass' }, el('b', {}, c.name), el('span', {}, `${c.count.toLocaleString('en')} models`)));
     return tile;
   });
-  const totalCats = idx.categories.size;
+  const rest = cats.slice(pickCats.length);
+  const faces = rest.slice(0, 5).map((c) => {
+    const img = el('img', { src: ctx.thumbUrl(c.cover!.th!), alt: '', loading: 'lazy', decoding: 'async' });
+    const face = el('span', { class: 'face' }, img);
+    studio(img, face);
+    return face;
+  });
+  const restNames = rest.slice(0, 3).map((c) => c.name);
+  const restLine = rest.length
+    ? `Also ${restNames.join(', ')}${rest.length > restNames.length ? ` and ${rest.length - restNames.length} more` : ''}`
+    : idx.groups.filter((g) => g !== 'Uncategorized').join(', ');
   tiles.push(el('a', { class: `tile all-tile${pickCats.length === 9 ? ' wide' : ''}`, href: '#/browse' },
-    el('span', { class: 'all-label' }, el('b', {}, `All ${totalCats} categories`), el('span', {}, idx.groups.join(', '))),
-    el('span', { class: 'all-arrow', 'aria-hidden': 'true' }, icon('chevron-right', 40))));
+    faces.length ? el('span', { class: 'faces', 'aria-hidden': 'true' }, faces) : null,
+    el('span', { class: 'all-label' }, el('b', {}, `All ${catCount} categories`), el('span', {}, restLine)),
+    el('span', { class: 'all-arrow', 'aria-hidden': 'true' }, icon('arrow-right', 22))));
   const catSec = el('section', { class: 'sec' },
     el('div', { class: 'sec-head' }, el('div', {}, el('h2', {}, 'Browse by category'), el('p', {}, 'Sorted automatically from every post.'))),
     el('div', { class: 'bento' }, tiles));
@@ -115,7 +128,12 @@ export function homeView(ctx: AppCtx): View {
 export function collectionTile(ctx: AppCtx, name: string, ids: readonly string[], href: string, fav: boolean): HTMLElement {
   const covers = ids.map((id) => ctx.idx.byId.get(id)).filter((i): i is Item => !!i?.th).slice(0, 3);
   const mosaic = el('div', { class: `mosaic n${covers.length}` },
-    covers.length ? covers.map((i) => el('div', {}, el('img', { src: ctx.thumbUrl(i.th!), alt: '', loading: 'lazy' })))
+    covers.length ? covers.map((i) => {
+      const img = el('img', { src: ctx.thumbUrl(i.th!), alt: '', loading: 'lazy' });
+      const cell = el('div', {}, img);
+      studio(img, cell);
+      return cell;
+    })
       : el('span', { class: 'mosaic-empty' }, icon(fav ? 'heart' : 'folder', 30)));
   return el('a', { class: 'col', href },
     mosaic,

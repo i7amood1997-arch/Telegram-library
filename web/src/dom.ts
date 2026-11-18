@@ -42,6 +42,7 @@ const ICONS: Record<string, string> = {
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   'chevron-right': '<path d="m9 6 6 6-6 6"/>',
+  'arrow-right': '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
   sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
@@ -136,4 +137,16 @@ export function safeLocal(): Storage | undefined {
 
 export function safeSession(): Storage | undefined {
   try { return window.sessionStorage; } catch { return undefined; }
+}
+
+/** Fade the edges of a horizontal scroller only where more content is hidden. */
+export function edgeFade(node: HTMLElement): void {
+  const update = () => {
+    const max = node.scrollWidth - node.clientWidth;
+    node.classList.toggle('fade-l', node.scrollLeft > 4);
+    node.classList.toggle('fade-r', max > 4 && node.scrollLeft < max - 4);
+  };
+  node.addEventListener('scroll', update, { passive: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(update).observe(node);
+  requestAnimationFrame(update);
 }
