@@ -131,25 +131,68 @@ async def ingest(settings: Settings, store: Store, deadline: float, stats: dict[
         stats["thumbs_rate_limited"] = str(limited).lower()
 
 
+def restore_ai_classifications(db: dict[str, Any], tax: Taxonomy) -> int:
+    """Undo a full 'reclassify': keep categories Claude already produced (they cost money)."""
+    restored = 0
+    for it in db["items"].values():
+        cls = it.get("classification")
+        if (cls and it.get("prompt_version") is not None
+                and it.get("taxonomy_version") != tax.version
+                and cls.get("category") in tax.all_categories):
+            it["taxonomy_version"] = tax.version
+            restored += 1
+    return restored
+
+
+def classify_with_rules(db: dict[str, Any], tax: Taxonomy, in_batch: set[str],
+                        stats: dict[str, Any]) -> None:
+    """Free pass: hashtags, captions and file names (no API call)."""
+    from .rules import rule_classify
+
+    for it in db["items"].values():
+        if it["id"] in in_batch or not needs_classification(it, tax):
+            continue
+        cls = rule_classify(it, tax)
+        if cls is None:
+            continue
+        it["classification"] = cls
+        it["taxonomy_version"] = tax.version
+        it["prompt_version"] = "rules"
+        it.pop("classify_attempts", None)
+        stats["rules_classified"] += 1
+
+
 def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
-             stats: dict[str, int]) -> None:
+             stats: dict[str, Any]) -> None:
+    db = store.db
+    migrations = db.setdefault("migrations", [])
+    if "restore_ai_classified_v1" not in migrations:
+        stats["restored_classifications"] = restore_ai_classifications(db, tax)
+        migrations.append("restore_ai_classified_v1")
+
+    in_batch = {i for b in db["batches"] for i in b["item_ids"]}
+    classify_with_rules(db, tax, in_batch, stats)
+
     if not settings.anthropic_key:
-        log.info("ANTHROPIC_API_KEY not set; skipping classification")
+        log.info("ANTHROPIC_API_KEY not set; skipping AI classification")
         return
     import anthropic
 
-    db = store.db
+    from .lite import LiteClassifier
+
     client = anthropic.Anthropic(api_key=settings.anthropic_key, max_retries=3)
 
     def channel_title(item: dict[str, Any]) -> str:
         return db["channels"].get(str(item["channel_id"]), {}).get("title", "")
 
-    clf = Classifier(client, tax, settings.classifier_model, store.thumbs_dir, channel_title)
+    full = Classifier(client, tax, settings.classifier_model, store.thumbs_dir, channel_title)
+    lite = LiteClassifier(client, tax, settings.classifier_model, store.thumbs_dir)
 
-    # 1. Collect finished batches.
+    # 1. Collect finished batches (old per-item batches and new grouped ones).
     still_running = []
     for record in db["batches"]:
         try:
+            clf = lite if record.get("kind") == "lite" else full
             done = clf.collect_batch(record, db["items"])
         except Exception as exc:
             log.warning("batch check failed (%s)", type(exc).__name__)
@@ -162,10 +205,10 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
             stats["classified"] += done
     db["batches"] = still_running
 
+    # 2. Whatever the rules could not place goes to the grouped, low-cost classifier.
     in_batch = {i for b in db["batches"] for i in b["item_ids"]}
     pending = [it for it in db["items"].values()
                if it["id"] not in in_batch and needs_classification(it, tax)]
-    # Wait for thumbnails that are still expected, so the image can be used.
     pending = [it for it in pending
                if it.get("thumb") or not it.get("preview_message_id")
                or it.get("thumb_attempts", 0) >= MAX_THUMB_ATTEMPTS]
@@ -173,17 +216,16 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
     stats["classify_pending"] = len(pending)
     if not pending:
         return
-
     if len(pending) >= settings.batch_threshold:
         try:
-            record = clf.submit_batch(pending)
+            record = lite.submit_batch(pending[: settings.max_batch_items])
             db["batches"].append(record)
             stats["batched"] += len(record["item_ids"])
             return
         except Exception as exc:
             log.warning("batch submit failed (%s); falling back to direct calls",
                         type(exc).__name__)
-    stats["classified"] += clf.classify_now(pending[: settings.max_classifications], deadline)
+    stats["classified"] += lite.classify_now(pending[: settings.max_classifications], deadline)
 
 
 def channel_report(store: Store, settings: Settings) -> list[str]:
@@ -264,9 +306,11 @@ def run(mode: str, data_dir: Path) -> int:
             log.error("%s", exc)
             return 4
     if mode == "reclassify":
+        # Redo only free/fallback results; categories Claude produced are kept (they cost money).
         for it in store.db["items"].values():
-            it.pop("taxonomy_version", None)
-            it.pop("classify_attempts", None)
+            if it.get("prompt_version") in (None, "rules"):
+                it.pop("taxonomy_version", None)
+                it.pop("classify_attempts", None)
     if mode == "sync":
         asyncio.run(ingest(settings, store, deadline, stats))
     if mode in ("sync", "reclassify"):

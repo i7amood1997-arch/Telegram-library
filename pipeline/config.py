@@ -97,6 +97,7 @@ class Settings:
     classifier_model: str = "claude-haiku-5-5"
     max_classifications: int = 300
     batch_threshold: int = 40
+    max_batch_items: int = 4000
     time_budget_s: int = 20 * 60
 
     @classmethod
@@ -117,6 +118,7 @@ class Settings:
             classifier_model=_env("CLASSIFIER_MODEL") or "claude-haiku-5-5",
             max_classifications=int(_env("MAX_CLASSIFICATIONS_PER_RUN") or 300),
             batch_threshold=int(_env("BATCH_THRESHOLD") or 40),
+            max_batch_items=int(_env("MAX_BATCH_ITEMS") or 4000),
             time_budget_s=int(_env("TIME_BUDGET_SECONDS") or 20 * 60),
         )
 
