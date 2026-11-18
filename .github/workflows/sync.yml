@@ -2,7 +2,8 @@ name: Sync library
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    # Four times a day: 06:17, 12:17, 18:17 and 00:17 Riyadh time (UTC+3).
+    - cron: '17 3,9,15,21 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -27,13 +28,11 @@ permissions:
   contents: write
   pages: write
   id-token: write
-  actions: write   # lets the "next-run" job start the following sync
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Only the sync job is serialized, so a waiting "next-run" job never blocks manual runs.
     concurrency:
       group: sync
       cancel-in-progress: false
@@ -165,36 +164,3 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-
-  # GitHub often skips scheduled runs on busy days. Each run therefore starts the next one
-  # itself, about 30 minutes after it started. Only one chain exists at a time: before starting
-  # a run it checks that no other sync run is already queued or running. To pause it, set the
-  # repository variable AUTO_SYNC to "off" (Settings → Secrets and variables → Actions → Variables).
-  next-run:
-    needs: sync
-    if: always() && needs.sync.result != 'cancelled' && vars.AUTO_SYNC != 'off'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      RUN_ID: ${{ github.run_id }}
-      INTERVAL_SECONDS: '1800'
-    steps:
-      - name: Wait until the next slot
-        run: |
-          started=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .run_started_at)
-          elapsed=$(( $(date +%s) - $(date -d "$started" +%s) ))
-          wait=$(( INTERVAL_SECONDS - elapsed ))
-          if [ "$wait" -gt 0 ]; then echo "waiting ${wait}s"; sleep "$wait"; fi
-
-      - name: Start the next sync unless one is already queued or running
-        run: |
-          others=$(gh api "repos/$REPO/actions/workflows/sync.yml/runs?per_page=30" \
-            --jq "[.workflow_runs[] | select(.id != $RUN_ID) | select(.status != \"completed\")] | length")
-          if [ "$others" -gt 0 ]; then
-            echo "Another sync run is already queued or running; it will continue the chain."
-          else
-            gh workflow run sync.yml --repo "$REPO" --ref main -f mode=sync
-            echo "Next sync started."
-          fi
