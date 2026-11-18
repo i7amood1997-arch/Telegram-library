@@ -45,8 +45,23 @@ export interface Indexed {
   tagCounts: [string, number][]; // most used first
 }
 
+const EMPTY: string[] = Object.freeze([]) as unknown as string[];
+
+/** The payload leaves out empty fields to save memory on phones; fill them in (shared empties). */
+function normalize(it: Item): void {
+  it.tg ??= EMPTY;
+  it.m ??= EMPTY;
+  it.co ??= EMPTY;
+  it.cap ??= '';
+  it.mv ??= null;
+  it.th ??= null;
+  it.col ??= false;
+  it.p ??= it.g !== 'Uncategorized';
+}
+
 export function indexLibrary(lib: Library): Indexed {
-  const items = [...lib.items].sort((a, b) => b.d - a.d);
+  for (const it of lib.items) normalize(it);
+  const items = lib.items.sort((a, b) => b.d - a.d);
   const byId = new Map(items.map((i) => [i.id, i]));
   const channelName = new Map(lib.channels.map((c) => [String(c.id), c.title || `Channel ${c.id}`]));
   const categories = new Map<string, CategoryInfo>();

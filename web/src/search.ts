@@ -1,6 +1,9 @@
 // Promise wrapper around the MiniSearch worker.
 import type { Item } from './types';
 
+/** Only the start of a post's text is searchable; titles, tags and file names carry the rest. */
+const CAPTION_SEARCH_CHARS = 140;
+
 export class SearchIndex {
   readonly ready: Promise<void>;
   private worker: Worker;
@@ -19,7 +22,18 @@ export class SearchIndex {
         this.pending.delete(msg.id);
       }
     };
-    this.worker.postMessage({ type: 'index', items });
+    // Send only what search needs, as one compact string per field (not the whole items).
+    const docs = items.map((it) => [
+      it.id,
+      it.t,
+      it.tg.join(' '),
+      `${it.c} ${it.g}`,
+      `${it.s} ${it.r}`,
+      it.f.map((f) => f[0]).join(' '),
+      it.cap.slice(0, CAPTION_SEARCH_CHARS),
+      it.m.length || it.co.length ? `${it.m.join(' ')} ${it.co.join(' ')}` : '',
+    ]);
+    this.worker.postMessage({ type: 'index', docs });
   }
 
   async search(q: string): Promise<string[]> {
