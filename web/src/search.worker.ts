@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 // Full-text search index, built off the main thread.
 import MiniSearch from 'minisearch';
-import type { Item } from './types';
 
 interface Doc {
   id: string;
@@ -24,7 +23,7 @@ const SEARCH_OPTS = {
 
 self.onmessage = (ev: MessageEvent) => {
   const msg = ev.data as
-    | { type: 'index'; items: Item[] }
+    | { type: 'index'; docs: string[][] }
     | { type: 'search'; id: number; q: string };
   if (msg.type === 'index') {
     index = new MiniSearch<Doc>({
@@ -33,18 +32,13 @@ self.onmessage = (ev: MessageEvent) => {
       processTerm: (term) => term.toLowerCase().replace(/[_\-.]+/g, ' ').trim() || null,
       tokenize: (text) => text.split(/[\s_\-.,;:!?()[\]{}"'#/\\|+]+/u),
     });
-    index.addAll(
-      msg.items.map((it) => ({
-        id: it.id,
-        t: it.t,
-        tg: it.tg.join(' '),
-        c: `${it.c} ${it.g}`,
-        s: `${it.s} ${it.r}`,
-        f: it.f.map((f) => f[0]).join(' '),
-        cap: it.cap,
-        extra: [...it.m, ...it.co].join(' '),
-      })),
-    );
+    const docs = msg.docs;
+    // Add in slices and drop each source row once indexed, so peak memory stays low.
+    for (let i = 0; i < docs.length; i++) {
+      const [id, t, tg, c, s, f, cap, extra] = docs[i];
+      index.add({ id, t, tg, c, s, f, cap, extra });
+      (docs as unknown[])[i] = undefined;
+    }
     self.postMessage({ type: 'ready' });
     return;
   }

@@ -165,7 +165,13 @@ def test_library_contents():
     lib = build_library(db, TAX)
     entry = lib["items"][0]
     assert entry["l"] == "https://t.me/chan/10"
-    assert entry["g"] == "Uncategorized" and entry["p"] is False
+    assert entry["g"] == "Uncategorized"
+    # Empty optional fields are left out to keep the payload small for phones.
+    assert "m" not in entry and "co" not in entry and "col" not in entry
+    long = item()
+    long["caption"] = "word " * 400
+    cap = build_library({"channels": {}, "items": {"5:10": long}}, TAX)["items"][0]["cap"]
+    assert len(cap) <= 120
     assert lib["channels"] == [{"id": 5, "title": "C"}]
     assert build_library(db, TAX, active_channel_ids={99})["items"] == []
     json.dumps(lib)
