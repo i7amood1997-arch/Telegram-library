@@ -4,7 +4,7 @@ import {
   ADDED, FACETS, SORTS, activeFilterCount, applyFilters, facetCounts, filtersFromParams,
   filtersToParams,
 } from '../data';
-import { el, icon } from '../dom';
+import { edgeFade, el, icon } from '../dom';
 import { VirtualGrid } from '../grid';
 import type { FacetKey, Filters, Item, Sort } from '../types';
 
@@ -46,6 +46,8 @@ export function browseView(ctx: AppCtx, params: URLSearchParams): View {
     chips,
     el('div', { class: 'toolbar' }, filterBtn, activeChips, el('label', { class: 'sort', for: 'sort' }, el('span', {}, 'Sort'), sortSel)),
     empty, gridRoot);
+  edgeFade(groupSeg);
+  edgeFade(chips);
   // The sheet lives on <body> so page transitions cannot trap it under the navigation.
   document.body.append(scrim, sheet);
 
