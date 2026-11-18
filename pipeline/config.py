@@ -21,7 +21,7 @@ NAME_SIMILARITY = 0.8
 
 THUMB_MAX_EDGE = 360  # keeps the Pages site well under GitHub's 1 GB limit
 THUMB_QUALITY = 62
-AI_IMAGE_EDGE = 256  # images sent to Claude are shrunk further: fewer image tokens
+AI_IMAGE_EDGE = 320  # images sent to Claude are shrunk further: fewer image tokens
 
 MAX_CLASSIFY_ATTEMPTS = 3
 CAPTION_MAX_CHARS = 1500
@@ -98,7 +98,7 @@ class Settings:
     classifier_model: str = "claude-haiku-5-5"
     max_classifications: int = 300
     batch_threshold: int = 40
-    max_batch_items: int = 4000
+    max_batch_items: int = 30000
     time_budget_s: int = 20 * 60
 
     @classmethod
@@ -119,7 +119,7 @@ class Settings:
             classifier_model=_env("CLASSIFIER_MODEL") or "claude-haiku-5-5",
             max_classifications=int(_env("MAX_CLASSIFICATIONS_PER_RUN") or 300),
             batch_threshold=int(_env("BATCH_THRESHOLD") or 40),
-            max_batch_items=int(_env("MAX_BATCH_ITEMS") or 4000),
+            max_batch_items=int(_env("MAX_BATCH_ITEMS") or 30000),
             time_budget_s=int(_env("TIME_BUDGET_SECONDS") or 20 * 60),
         )
 

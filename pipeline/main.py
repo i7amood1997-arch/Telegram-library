@@ -186,6 +186,35 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
         stats["restored_classifications"] = restore_ai_classifications(db, tax)
         migrations.append("restore_ai_classified_v1")
 
+    if "retry_uncategorized_v1" not in migrations:
+        # Items that ended as Uncategorized (earlier failures, e.g. no API credit) get a
+        # fresh, full chance with the AI classifier.
+        for it in db["items"].values():
+            if (it.get("classification") or {}).get("category") == "Uncategorized":
+                it.pop("classification", None)
+                it.pop("taxonomy_version", None)
+                it.pop("classify_attempts", None)
+                stats["uncategorized_retried"] += 1
+        migrations.append("retry_uncategorized_v1")
+
+    if "rules_recheck_v1" not in migrations:
+        # Stricter rules: re-check earlier rule results; unclear ones go to Claude instead.
+        from .rules import rule_classify
+
+        for it in db["items"].values():
+            if it.get("prompt_version") != "rules":
+                continue
+            cls = rule_classify(it, tax)
+            if cls is None:
+                for k in ("classification", "taxonomy_version", "prompt_version",
+                          "classify_attempts"):
+                    it.pop(k, None)
+                stats["rules_sent_to_ai"] += 1
+            elif cls["category"] != (it.get("classification") or {}).get("category"):
+                it["classification"] = cls
+                stats["rules_recategorized"] += 1
+        migrations.append("rules_recheck_v1")
+
     in_batch = {i for b in db["batches"] for i in b["item_ids"]}
     classify_with_rules(db, tax, in_batch, stats)
 
@@ -194,7 +223,7 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
         return
     import anthropic
 
-    from .lite import LiteClassifier
+    from .lite import LiteClassifier, api_error_text
 
     client = anthropic.Anthropic(api_key=settings.anthropic_key, max_retries=3)
 
@@ -234,13 +263,18 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
         return
     if len(pending) >= settings.batch_threshold:
         try:
-            record = lite.submit_batch(pending[: settings.max_batch_items])
-            db["batches"].append(record)
-            stats["batched"] += len(record["item_ids"])
+            # Several batches of BATCH_MAX_ITEMS each (request size limits), all at once.
+            todo = pending[: settings.max_batch_items]
+            while todo:
+                record = lite.submit_batch(todo)
+                db["batches"].append(record)
+                stats["batched"] += len(record["item_ids"])
+                todo = todo[len(record["item_ids"]):]
             return
         except Exception as exc:
-            from .lite import api_error_text
-
+            if stats["batched"]:
+                log.warning("batch submit stopped (%s)", api_error_text(exc))
+                return
             log.warning("batch submit failed (%s); falling back to direct calls",
                         api_error_text(exc))
     stats["classified"] += lite.classify_now(pending[: settings.max_classifications], deadline)

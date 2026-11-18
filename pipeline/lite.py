@@ -27,8 +27,8 @@ from .thumbnails import ai_image
 
 log = logging.getLogger("pipeline.lite")
 
-LITE_PROMPT_VERSION = 1
-GROUP_SIZE = 8
+LITE_PROMPT_VERSION = 2
+GROUP_SIZE = 5  # fewer items per request = more attention per item
 CAPTION_CHARS = 280
 TOOL = "record_items"
 BATCH_MAX_ITEMS = 4000
@@ -44,8 +44,21 @@ def system_prompt(tax: Taxonomy) -> str:
         f"{TOOL} once with: i (item number), c (category code), s (style code), t (English title, "
         "2-5 words, Title Case, what the preview shows; no file extensions or channel names), "
         "g (3-5 lowercase English search tags).\n"
-        "Decide from the image, names and caption together, not the file extension. A full room "
-        "or full exterior view is a Scene.\n"
+        "Decide from the image, names and caption together, not the file extension.\n"
+        "Rules for the category:\n"
+        "- Pick the ONE main object being sold. A sofa shown with a rug and a table is a sofa; "
+        "a set of several different furniture pieces is the category of the largest piece.\n"
+        "- Interior Scene / Exterior Scene only for a complete room or a complete building "
+        "view sold as a whole scene, not for a single object photographed in a room.\n"
+        "- Kitchens = full kitchen sets; Bathrooms & Sanitary = tubs, sinks, toilets, faucets, "
+        "bathroom furniture; Wardrobes & Storage = cabinets, shelves, dressers, TV stands; "
+        "Decor & Accessories = vases, books, mirrors, frames, sculptures, clocks, tableware, "
+        "decor sets; Wall & Ceiling Elements = panels, mouldings, fireplaces, stairs, columns.\n"
+        "- Resources (materials, textures, HDRI, plugins, software, courses) only when the post "
+        "sells that resource rather than a 3D model; texture/material packs are Materials & "
+        "Textures even if packed as zip/rar.\n"
+        "- Look at the image first; captions may be in Russian, Chinese or other languages "
+        "(e.g. диван=sofa, стол=table, кресло=armchair, люстра=chandelier, шкаф=wardrobe).\n"
         f"Categories:\n{cats}\nStyles: {styles}"
     )
 
@@ -109,7 +122,7 @@ def build_group_request(
         )
     return {
         "model": model,
-        "max_tokens": 90 * len(items) + 60,
+        "max_tokens": 4096,  # room for thinking; only used tokens are billed
         "system": system_prompt(tax),
         "messages": [{"role": "user", "content": content}],
         "tools": [tool_schema(tax)],
