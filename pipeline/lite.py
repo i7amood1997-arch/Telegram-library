@@ -22,7 +22,8 @@ from .classify import (
     fallback,
     item_text,
 )
-from .config import Taxonomy
+from .config import AI_IMAGE_EDGE, Taxonomy
+from .thumbnails import ai_image
 
 log = logging.getLogger("pipeline.lite")
 
@@ -93,7 +94,7 @@ def build_group_request(
                     "source": {
                         "type": "base64",
                         "media_type": "image/webp",
-                        "data": base64.b64encode(thumb.read_bytes()).decode("ascii"),
+                        "data": base64.b64encode(ai_image(thumb, AI_IMAGE_EDGE)).decode("ascii"),
                     },
                 }
             )
@@ -173,6 +174,20 @@ def _apply_group(group: list[dict[str, Any]], entries: list[dict[str, Any]], tax
     return sum(int(apply_entry(it, by_i.get(n), tax)) for n, it in enumerate(group))
 
 
+MAX_API_ERRORS = 3
+
+
+def api_error_text(exc: Exception) -> str:
+    """Status and the API's own error message (it never contains our content), truncated."""
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    msg = ""
+    if isinstance(body, dict):
+        err = body.get("error")
+        msg = str(err.get("message", "")) if isinstance(err, dict) else ""
+    return f"{type(exc).__name__} status={status} {msg[:200]}".strip()
+
+
 class LiteClassifier:
     def __init__(self, client: Any, tax: Taxonomy, model: str, thumbs_dir: Path) -> None:
         self.client = client
@@ -184,7 +199,7 @@ class LiteClassifier:
         return [items[i : i + GROUP_SIZE] for i in range(0, len(items), GROUP_SIZE)]
 
     def classify_now(self, items: list[dict[str, Any]], deadline: float) -> int:
-        done = 0
+        done = errors = 0
         for group in self._groups(items):
             if time.time() > deadline:
                 break
@@ -193,10 +208,16 @@ class LiteClassifier:
                     **build_group_request(group, self.thumbs_dir, self.tax, self.model)
                 )
                 done += _apply_group(group, _entries(msg), self.tax)
-            except Exception as exc:  # log the type only, never content
-                log.warning("lite classify error %s", type(exc).__name__)
-                for it in group:
-                    apply_entry(it, None, self.tax)
+                errors = 0
+            except Exception as exc:
+                # An API failure (billing, bad request, overload) is not the item's fault:
+                # do not count an attempt, so items are not given up as Uncategorized.
+                errors += 1
+                log.warning("lite classify error: %s", api_error_text(exc))
+                if errors >= MAX_API_ERRORS:
+                    log.warning("stopping AI classification for this run after %d API errors",
+                                errors)
+                    break
         return done
 
     def submit_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:

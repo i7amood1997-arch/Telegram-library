@@ -118,11 +118,13 @@ def test_thumbnail_small_and_opaque():
 
     from PIL import Image
 
+    from pipeline.config import THUMB_MAX_EDGE
+
     buf = BytesIO()
     Image.new("RGB", (1600, 1200), (120, 80, 40)).save(buf, "JPEG")
     out = make_thumb(buf.getvalue())
     img = Image.open(BytesIO(out))
-    assert img.format == "WEBP" and max(img.size) == 480
+    assert img.format == "WEBP" and max(img.size) == THUMB_MAX_EDGE
     name = thumb_name("secret", "5:10")
     assert name.endswith(".webp") and "5" not in name[:0] and len(name) == 29
 

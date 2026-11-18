@@ -19,8 +19,9 @@ GROUP_MAX_SECONDS = 6 * 3600
 # Archive similarity threshold (0..1) for merging consecutive archives into one item.
 NAME_SIMILARITY = 0.8
 
-THUMB_MAX_EDGE = 480
-THUMB_QUALITY = 70
+THUMB_MAX_EDGE = 360  # keeps the Pages site well under GitHub's 1 GB limit
+THUMB_QUALITY = 62
+AI_IMAGE_EDGE = 256  # images sent to Claude are shrunk further: fewer image tokens
 
 MAX_CLASSIFY_ATTEMPTS = 3
 CAPTION_MAX_CHARS = 1500
