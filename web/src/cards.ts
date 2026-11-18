@@ -103,7 +103,7 @@ export function preview(item: Item, ctx: CardContext, cls = 'pv'): HTMLElement {
   return box;
 }
 
-export function favButton(item: Item, ctx: CardContext, cls = 'heart glass'): HTMLButtonElement {
+export function favButton(item: Item, ctx: CardContext, cls = 'heart frost'): HTMLButtonElement {
   const on = ctx.saved.isFavorite(item.id);
   const btn = el('button', {
     class: cls, type: 'button', 'data-fav': item.id, 'aria-pressed': String(on),
@@ -127,9 +127,9 @@ export function card(item: Item, ctx: CardContext): HTMLElement {
   const pv = preview(item, ctx, 'pv tilt');
   tilt(pv);
   const badges = el('div', { class: 'badges' },
-    ctx.isNew(item) ? el('span', { class: 'badge glass' }, 'New') : null,
-    item.col ? el('span', { class: 'badge glass' }, 'Pack') : null,
-    item.f.length > 1 ? el('span', { class: 'badge glass' }, `${item.f.length} parts`) : null,
+    ctx.isNew(item) ? el('span', { class: 'badge frost' }, 'New') : null,
+    item.col ? el('span', { class: 'badge frost' }, 'Pack') : null,
+    item.f.length > 1 ? el('span', { class: 'badge frost' }, `${item.f.length} parts`) : null,
   );
   return el('article', { class: 'card', role: 'listitem' },
     pv,

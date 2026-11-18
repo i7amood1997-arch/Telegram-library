@@ -49,7 +49,7 @@ export function homeView(ctx: AppCtx): View {
   };
   show(0);
   const stage = el('div', { class: 'stage' }, slides, picks.length > 1 ? dots : null,
-    picks.length ? el('div', { class: 'cap glass' },
+    picks.length ? el('div', { class: 'cap frost' },
       el('div', { class: 'cap-text' }, el('small', {}, 'Featured'), capTitle, capMeta),
       el('button', { class: 'pill primary sm', type: 'button', onclick: () => ctx.open(picks[current]) }, 'View')) : el('div', { class: 'stage-empty' }, icon('cube', 48)));
   tilt(stage);
@@ -88,7 +88,7 @@ export function homeView(ctx: AppCtx): View {
   const tiles = pickCats.map((c, i) => {
     const tile = el('a', { class: `tile ${sizes[i] ?? ''}`, href: browseHref({ g: c.group, cat: c.name }) },
       preview(c.cover!, ctx, 'pv tile-img'),
-      el('span', { class: 'tile-label glass' }, el('b', {}, c.name), el('span', {}, `${c.count.toLocaleString('en')} models`)));
+      el('span', { class: 'tile-label frost' }, el('b', {}, c.name), el('span', {}, `${c.count.toLocaleString('en')} models`)));
     return tile;
   });
   const rest = cats.slice(pickCats.length);
