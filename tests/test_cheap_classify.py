@@ -105,7 +105,7 @@ def test_lite_classifier_groups_items(tmp_path):
     items = [item(iid=f"1:{i}") for i in range(20)]
     done = LiteClassifier(client, TAX, "m", tmp_path).classify_now(items, deadline=1e12)
     assert done == 20
-    assert calls == [8, 8, 4]  # 3 requests instead of 20
+    assert calls == [5, 5, 5, 5]  # 4 requests instead of 20
 
 
 def test_api_errors_do_not_burn_attempts(tmp_path):
@@ -145,3 +145,25 @@ def test_thumbs_shrink_and_ai_image(tmp_path):
     import io
     with Image.open(io.BytesIO(ai_image(big, AI_IMAGE_EDGE))) as im:
         assert max(im.size) == AI_IMAGE_EDGE
+
+
+def test_rules_need_tag_or_name_evidence():
+    # Caption words alone are too loose: "стол" and "стулья" in a description go to Claude.
+    assert rule_classify(item("3D Oasis.rar", "Кухня в стиле, стол и стулья, стол"), TAX) is None
+
+
+def test_uncategorized_and_weak_rules_are_retried():
+    weak = item("3D Oasis.rar", "стол и ещё стол", iid="w")
+    weak.update(classification={"category": "Tables"}, prompt_version="rules", taxonomy_version=1)
+    unc = item(iid="u")
+    unc.update(classification={"category": "Uncategorized"}, taxonomy_version=1)
+    db = {"items": {"w": weak, "u": unc}, "batches": [], "channels": {},
+          "migrations": ["restore_ai_classified_v1"]}
+    from collections import defaultdict
+
+    from pipeline.config import Settings
+    from pipeline.main import classify
+
+    store = SimpleNamespace(db=db, thumbs_dir=None)
+    classify(Settings(), store, TAX, 1e12, defaultdict(int))
+    assert "classification" not in weak and "classification" not in unc

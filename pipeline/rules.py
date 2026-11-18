@@ -103,9 +103,12 @@ def _matches(words: list[str], text: str, stem: str) -> bool:
 
 def _score(table: dict[str, list[tuple[str, str]]], tags: list[str], tag_text: str,
            name_words: list[str], name_text: str, words: list[str], text: str
-           ) -> tuple[dict[str, int], dict[str, list[str]]]:
-    """Hashtag hit = 3, file-name hit = 2 (+1 for the last word, the head noun), caption hit = 1."""
+           ) -> tuple[dict[str, int], dict[str, list[str]], set[str]]:
+    """Hashtag hit = 3, file-name hit = 2 (+1 for the last word, the head noun), caption hit = 1.
+
+    Also returns the categories with strong evidence (a hashtag or file-name hit)."""
     scores: dict[str, int] = {}
+    strong: set[str] = set()
     labels: dict[str, list[str]] = {}
     last_pos: dict[str, int] = {}
     for cat, stems in table.items():
@@ -120,6 +123,8 @@ def _score(table: dict[str, list[tuple[str, str]]], tags: list[str], tag_text: s
             elif _matches(words, text, stem):
                 hit = 1
             if hit:
+                if hit >= 2:
+                    strong.add(cat)
                 scores[cat] = scores.get(cat, 0) + hit
                 labels.setdefault(cat, [])
                 if label not in labels[cat]:
@@ -127,7 +132,7 @@ def _score(table: dict[str, list[tuple[str, str]]], tags: list[str], tag_text: s
     if last_pos:
         head = max(last_pos, key=lambda c: last_pos[c])
         scores[head] += 1
-    return scores, labels
+    return scores, labels, strong
 
 
 def rule_classify(item: dict[str, Any], tax: Taxonomy) -> dict[str, Any] | None:
@@ -143,16 +148,18 @@ def rule_classify(item: dict[str, Any], tax: Taxonomy) -> dict[str, Any] | None:
     if resource and resource in tax.all_categories:
         category, label_words = resource, [resource.split(" ")[0].lower()]
     else:
-        scores, labels = _score(CATEGORY_WORDS, tags, tag_text, name_words, name_text, words, text)
+        scores, labels, strong = _score(CATEGORY_WORDS, tags, tag_text, name_words, name_text, words, text)
         if not scores:
-            scores, labels = _score(SCENE_WORDS, tags, tag_text, name_words, name_text, words, text)
+            scores, labels, strong = _score(SCENE_WORDS, tags, tag_text, name_words, name_text, words, text)
         if not scores:
             return None
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])
         best, best_score = ranked[0]
         second = ranked[1][1] if len(ranked) > 1 else 0
-        # Need a hashtag hit (3) or two word hits, and a clear winner.
-        if best_score < 2 or best_score == second or best not in tax.all_categories:
+        # Need a hashtag or file-name hit for the winner (caption words alone are too loose),
+        # and a clear winner; anything else goes to Claude.
+        if (best not in strong or best_score < 2 or best_score <= second
+                or best not in tax.all_categories):
             return None
         category, label_words = best, labels[best]
 
