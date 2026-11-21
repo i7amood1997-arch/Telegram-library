@@ -20,7 +20,8 @@ from .config import load_taxonomy
 from .thumbnails import make_thumb, thumb_name
 
 WORDS = {
-    "Sofas & Armchairs": ["Boucle Curved Sofa", "Leather Club Armchair", "Modular Corner Sofa"],
+    "Sofas": ["Boucle Curved Sofa", "Modular Corner Sofa"],
+    "Armchairs": ["Leather Club Armchair", "Rattan Lounge Chair"],
     "Chairs & Stools": ["Bentwood Dining Chair", "Rattan Bar Stool", "Wishbone Chair"],
     "Tables": ["Travertine Coffee Table", "Oak Dining Table", "Marble Side Table"],
     "Beds": ["Upholstered Platform Bed", "Canopy Bed", "Linen Bed Set"],

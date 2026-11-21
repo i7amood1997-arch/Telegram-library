@@ -178,6 +178,80 @@ def classify_with_rules(db: dict[str, Any], tax: Taxonomy, in_batch: set[str],
         stats["rules_classified"] += 1
 
 
+SOFA_WORDS = ("sofa", "sofas", "couch", "settee", "loveseat", "sectional", "daybed",
+              "диван", "софа")
+ARMCHAIR_WORDS = ("armchair", "armchairs", "chair", "lounger", "recliner", "pouf", "ottoman",
+                  "chaise", "кресло", "пуф")
+SPLIT_FROM = {"Sofas & Armchairs": ("Sofas", "Armchairs")}
+RETRY_UNCATEGORIZED_EVERY_S = 2 * 86400
+RETRY_UNCATEGORIZED_PER_RUN = 500
+
+
+def _split_sofa_armchair(item: dict[str, Any], tax: Taxonomy) -> str | None:
+    """Sofas vs Armchairs for an item filed under the old combined category; None if unclear.
+
+    The English title decides first (a sofa set with armchairs counts as Sofas), then the
+    free rules over hashtags, file names and caption."""
+    from .rules import rule_classify
+
+    title = (item.get("classification") or {}).get("title", "")
+    words = [w.strip(".,()-").lower() for w in title.split()]
+    if any(w in SOFA_WORDS for w in words):
+        return "Sofas"  # also sofa sets that include armchairs
+    if any(w in ARMCHAIR_WORDS for w in words):
+        return "Armchairs"
+    cls = rule_classify(item, tax)
+    if cls and cls["category"] in ("Sofas", "Armchairs"):
+        return cls["category"]
+    return None
+
+
+def migrate_taxonomy(db: dict[str, Any], tax: Taxonomy, stats: dict[str, Any]) -> None:
+    """After a taxonomy change, redo only items whose category no longer exists.
+
+    Items in a category that still exists just take the new version (no API cost). The old
+    "Sofas & Armchairs" is split by title/rules; anything unclear goes to Claude.
+    """
+    valid = set(tax.all_categories) | {"Uncategorized"}
+    for it in db["items"].values():
+        cls = it.get("classification")
+        if not cls:
+            continue
+        category = cls.get("category")
+        if category in valid:
+            if it.get("taxonomy_version") not in (None, tax.version):
+                it["taxonomy_version"] = tax.version
+                stats["taxonomy_kept"] += 1
+            continue
+        new = _split_sofa_armchair(it, tax) if category in SPLIT_FROM else None
+        if new:
+            cls["category"] = new
+            cls["group"] = tax.group_of(new) or "Uncategorized"
+            it["taxonomy_version"] = tax.version
+            stats["taxonomy_split"] += 1
+        else:
+            for k in ("classification", "taxonomy_version", "prompt_version", "classify_attempts"):
+                it.pop(k, None)
+            stats["taxonomy_to_ai"] += 1
+
+
+def retry_uncategorized(db: dict[str, Any], stats: dict[str, Any], now: float) -> None:
+    """Give items that ended as Uncategorized another chance every few days."""
+    n = 0
+    for it in db["items"].values():
+        if n >= RETRY_UNCATEGORIZED_PER_RUN:
+            break
+        if (it.get("classification") or {}).get("category") != "Uncategorized":
+            continue
+        if it.get("retry_at", 0) > now:
+            continue
+        for k in ("classification", "taxonomy_version", "prompt_version", "classify_attempts"):
+            it.pop(k, None)
+        it["retry_at"] = now + RETRY_UNCATEGORIZED_EVERY_S
+        n += 1
+    stats["uncategorized_retried"] += n
+
+
 def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
              stats: dict[str, Any]) -> None:
     db = store.db
@@ -215,6 +289,8 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
                 stats["rules_recategorized"] += 1
         migrations.append("rules_recheck_v1")
 
+    migrate_taxonomy(db, tax, stats)
+    retry_uncategorized(db, stats, time.time())
     in_batch = {i for b in db["batches"] for i in b["item_ids"]}
     classify_with_rules(db, tax, in_batch, stats)
 
@@ -249,6 +325,7 @@ def classify(settings: Settings, store: Store, tax: Taxonomy, deadline: float,
         else:
             stats["classified"] += done
     db["batches"] = still_running
+    migrate_taxonomy(db, tax, stats)  # results of batches sent before a taxonomy change
 
     # 2. Whatever the rules could not place goes to the grouped, low-cost classifier.
     in_batch = {i for b in db["batches"] for i in b["item_ids"]}
