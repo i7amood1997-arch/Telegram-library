@@ -19,11 +19,11 @@ def item(name="3D Oasis.rar", caption="", iid="1:1", thumb=None):
 
 
 @pytest.mark.parametrize(("name", "caption", "category", "title"), [
-    ("3D Oasis.rar", "#Мебель #Диваны #3dsMax #Corona #Vray", "Sofas & Armchairs", "Sofa"),
+    ("3D Oasis.rar", "#Мебель #Диваны #3dsMax #Corona #Vray", "Sofas", "Sofa"),
     ("3D Oasis.rar", "#Мебель #Столы #Corona", "Tables", "Table"),
     ("3D Oasis.rar", "#Свет #Люстры #Неоклассика", "Lighting", "Neoclassic Chandelier"),
     ("3D Oasis.rar", "#Кухня #Современный", "Kitchens", "Modern Kitchen"),
-    ("Boucle_Sofa_Corona.rar", "", "Sofas & Armchairs", "Boucle Sofa"),
+    ("Boucle_Sofa_Corona.rar", "", "Sofas", "Boucle Sofa"),
     ("Table lamp.rar", "", "Lighting", "Table Lamp"),
     ("Wood_PBR_Textures.rar", "", "Materials & Textures", None),
     ("3D Oasis.rar", "#Интерьер #Гостиная", "Interior Scene", None),
@@ -77,12 +77,12 @@ def test_group_request_is_compact(tmp_path):
 
 def test_apply_entry_codes_and_failure():
     it = item("Boucle_Sofa_corona_max2018.rar")
-    sofa = TAX.all_categories.index("Sofas & Armchairs")
+    sofa = TAX.all_categories.index("Sofas")
     modern = TAX.styles.index("Modern")
     entry = {"i": 0, "c": sofa, "s": modern, "t": "Boucle Sofa", "g": ["Sofa", "boucle"]}
     assert apply_entry(it, entry, TAX)
     c = it["classification"]
-    assert c["category"] == "Sofas & Armchairs" and c["style"] == "Modern"
+    assert c["category"] == "Sofas" and c["style"] == "Modern"
     assert c["render_engine"] == "Corona" and c["max_version"] == "2018"  # free regex hints
     bad = item(iid="2")
     for _ in range(3):
@@ -92,7 +92,7 @@ def test_apply_entry_codes_and_failure():
 
 def test_lite_classifier_groups_items(tmp_path):
     calls = []
-    sofa = TAX.all_categories.index("Sofas & Armchairs")
+    sofa = TAX.all_categories.index("Sofas")
 
     def create(**req):
         n = sum(1 for c in req["messages"][0]["content"] if c["type"] == "text")
@@ -167,3 +167,64 @@ def test_uncategorized_and_weak_rules_are_retried():
     store = SimpleNamespace(db=db, thumbs_dir=None)
     classify(Settings(), store, TAX, 1e12, defaultdict(int))
     assert "classification" not in weak and "classification" not in unc
+
+
+def test_rules_tell_sofas_from_armchairs():
+    cls = rule_classify(item("3D Oasis.rar", "#Мебель #Кресла #Corona"), TAX)
+    assert cls["category"] == "Armchairs"
+    assert rule_classify(item("Lounge_armchair.rar"), TAX)["category"] == "Armchairs"
+    assert rule_classify(item("Chesterfield_sofa.rar"), TAX)["category"] == "Sofas"
+
+
+def test_taxonomy_migration_splits_and_keeps(monkeypatch):
+    from collections import defaultdict
+
+    from pipeline.main import migrate_taxonomy
+
+    def old(iid, title, category, caption=""):
+        it = item(iid=iid, caption=caption)
+        it.update(classification={"title": title, "category": category, "group": "Interior"},
+                  taxonomy_version=1, prompt_version="lite-2")
+        return it
+
+    items = {
+        "a": old("a", "Boucle Sofa", "Sofas & Armchairs"),
+        "b": old("b", "Lounge Armchair", "Sofas & Armchairs"),
+        "c": old("c", "Sofa with Armchair Set", "Sofas & Armchairs"),
+        "d": old("d", "Velvet Piece", "Sofas & Armchairs"),           # unclear -> Claude
+        "e": old("e", "Oak Table", "Tables"),                         # unchanged, no API
+    }
+    stats = defaultdict(int)
+    migrate_taxonomy({"items": items}, TAX, stats)
+    assert items["a"]["classification"]["category"] == "Sofas"
+    assert items["b"]["classification"]["category"] == "Armchairs"
+    assert items["c"]["classification"]["category"] == "Sofas"
+    assert "classification" not in items["d"]
+    assert items["e"]["classification"]["category"] == "Tables"
+    assert items["e"]["taxonomy_version"] == TAX.version
+    assert stats["taxonomy_split"] == 3 and stats["taxonomy_to_ai"] == 1
+    assert stats["taxonomy_kept"] == 1
+
+
+def test_legacy_batch_codes_use_old_category_list():
+    from pipeline.lite import LEGACY_CATS_V1, apply_entry
+
+    it = item(iid="x")
+    assert apply_entry(it, {"i": 0, "c": 1, "s": 0, "t": "Bar Stool"}, TAX, LEGACY_CATS_V1)
+    assert it["classification"]["category"] == "Chairs & Stools"
+
+
+def test_uncategorized_items_are_retried_later():
+    from collections import defaultdict
+
+    from pipeline.main import retry_uncategorized
+
+    it = item(iid="u")
+    it.update(classification={"category": "Uncategorized"}, taxonomy_version=2)
+    db = {"items": {"u": it}}
+    stats = defaultdict(int)
+    retry_uncategorized(db, stats, now=1000)
+    assert "classification" not in it and stats["uncategorized_retried"] == 1
+    it.update(classification={"category": "Uncategorized"}, taxonomy_version=2)
+    retry_uncategorized(db, stats, now=2000)   # too soon: left alone
+    assert it["classification"]["category"] == "Uncategorized"

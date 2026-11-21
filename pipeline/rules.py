@@ -16,9 +16,10 @@ from .config import Taxonomy
 # category -> [(word stem, English label used for titles and tags)]
 # Stems match the start of a word ("диван" matches "диваны"); keep them specific.
 CATEGORY_WORDS: dict[str, list[tuple[str, str]]] = {
-    "Sofas & Armchairs": [("диван", "sofa"), ("софа", "sofa"), ("кресл", "armchair"), ("пуф", "pouf"),
-                          ("sofa", "sofa"), ("couch", "sofa"), ("armchair", "armchair"), ("settee", "sofa"),
-                          ("loveseat", "sofa"), ("chaise", "chaise longue"), ("pouf", "pouf"), ("ottoman", "ottoman")],
+    "Sofas": [("диван", "sofa"), ("софа", "sofa"), ("sofa", "sofa"), ("couch", "sofa"), ("settee", "sofa"),
+              ("loveseat", "sofa"), ("sectional", "sofa"), ("daybed", "daybed")],
+    "Armchairs": [("кресл", "armchair"), ("пуф", "pouf"), ("armchair", "armchair"), ("chaise", "chaise longue"),
+                  ("pouf", "pouf"), ("ottoman", "ottoman"), ("recliner", "recliner"), ("lounge chair", "lounge chair")],
     "Chairs & Stools": [("стул", "chair"), ("табурет", "stool"), ("скамь", "bench"), ("chair", "chair"),
                         ("stool", "stool"), ("bench", "bench")],
     "Tables": [("стол", "table"), ("столик", "table"), ("table", "table"), ("desk", "desk"),

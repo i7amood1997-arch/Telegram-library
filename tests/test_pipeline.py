@@ -31,7 +31,7 @@ def item(**kw):
     return base
 
 
-GOOD = {"title": "Boucle Sofa", "group": "Exterior", "category": "Sofas & Armchairs",
+GOOD = {"title": "Boucle Sofa", "group": "Exterior", "category": "Sofas",
         "style": "Modern", "render_engine": "V-Ray", "max_version": "2020",
         "materials": ["Fabric", "fabric"], "colors": ["Beige"], "tags": ["Sofa", "#couch"],
         "is_collection": False, "confidence": 1.4}

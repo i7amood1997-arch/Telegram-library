@@ -1,9 +1,11 @@
 # Category tree used by the automatic classifier and the website filters.
-# Edit freely, then bump `version` and run the "sync" workflow with mode=reclassify.
-version: 1
+# Edit freely, then bump `version`. Items whose category no longer exists are reclassified on
+# the next run (renamed or split categories); everything else is kept as is.
+version: 2
 categories:
   Interior:
-    - Sofas & Armchairs
+    - Sofas
+    - Armchairs
     - Chairs & Stools
     - Tables
     - Beds

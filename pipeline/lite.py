@@ -27,11 +27,20 @@ from .thumbnails import ai_image
 
 log = logging.getLogger("pipeline.lite")
 
-LITE_PROMPT_VERSION = 2
+LITE_PROMPT_VERSION = 3
 GROUP_SIZE = 5  # fewer items per request = more attention per item
 CAPTION_CHARS = 280
 TOOL = "record_items"
 BATCH_MAX_ITEMS = 4000
+# Category list of taxonomy v1, for batches submitted before categories were stored with them.
+LEGACY_CATS_V1 = [
+    "Sofas & Armchairs", "Chairs & Stools", "Tables", "Beds", "Wardrobes & Storage", "Kitchens",
+    "Bathrooms & Sanitary", "Lighting", "Decor & Accessories", "Rugs & Curtains", "Indoor Plants",
+    "Appliances & Electronics", "Doors & Windows", "Wall & Ceiling Elements", "Trees & Vegetation",
+    "Vehicles", "Outdoor Furniture", "Buildings & Facades", "Street Elements",
+    "Landscape & Hardscape", "People", "Interior Scene", "Exterior Scene", "Materials & Textures",
+    "HDRI", "Plugins & Add-ons", "3D Software", "Courses & Tutorials",
+]
 
 
 def system_prompt(tax: Taxonomy) -> str:
@@ -50,6 +59,8 @@ def system_prompt(tax: Taxonomy) -> str:
         "a set of several different furniture pieces is the category of the largest piece.\n"
         "- Interior Scene / Exterior Scene only for a complete room or a complete building "
         "view sold as a whole scene, not for a single object photographed in a room.\n"
+        "- Sofas = sofas, couches, sectionals, daybeds; Armchairs = armchairs, lounge chairs, "
+        "recliners, poufs and ottomans; a sofa sold together with armchairs is Sofas.\n"
         "- Kitchens = full kitchen sets; Bathrooms & Sanitary = tubs, sinks, toilets, faucets, "
         "bathroom furniture; Wardrobes & Storage = cabinets, shelves, dressers, TV stands; "
         "Decor & Accessories = vases, books, mirrors, frames, sculptures, clocks, tableware, "
@@ -138,12 +149,16 @@ def _entries(message: Any) -> list[dict[str, Any]]:
     return []
 
 
-def apply_entry(item: dict[str, Any], entry: dict[str, Any] | None, tax: Taxonomy) -> bool:
-    """Store a compact answer on the item; on failure count an attempt (fallback after 3)."""
+def apply_entry(item: dict[str, Any], entry: dict[str, Any] | None, tax: Taxonomy,
+                cats: list[str] | None = None) -> bool:
+    """Store a compact answer on the item; on failure count an attempt (fallback after 3).
+
+    `cats` is the category list the request was built with (codes index into it)."""
     try:
         if entry is None:
             raise ValueError("missing")
-        cats, styles = tax.all_categories, tax.styles
+        cats = cats or tax.all_categories
+        styles = tax.styles
         category = cats[int(entry["c"])]
         style = styles[int(entry["s"])] if 0 <= int(entry.get("s", -1)) < len(styles) else "Other"
         title = re.sub(r"\s+", " ", str(entry.get("t") or "")).strip()[:80]
@@ -177,14 +192,15 @@ def apply_entry(item: dict[str, Any], entry: dict[str, Any] | None, tax: Taxonom
         return False
 
 
-def _apply_group(group: list[dict[str, Any]], entries: list[dict[str, Any]], tax: Taxonomy) -> int:
+def _apply_group(group: list[dict[str, Any]], entries: list[dict[str, Any]], tax: Taxonomy,
+                 cats: list[str] | None = None) -> int:
     by_i = {}
     for e in entries:
         try:
             by_i[int(e.get("i", -1))] = e
         except (TypeError, ValueError):
             continue
-    return sum(int(apply_entry(it, by_i.get(n), tax)) for n, it in enumerate(group))
+    return sum(int(apply_entry(it, by_i.get(n), tax, cats)) for n, it in enumerate(group))
 
 
 MAX_API_ERRORS = 3
@@ -211,27 +227,43 @@ class LiteClassifier:
     def _groups(self, items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
         return [items[i : i + GROUP_SIZE] for i in range(0, len(items), GROUP_SIZE)]
 
-    def classify_now(self, items: list[dict[str, Any]], deadline: float) -> int:
-        done = errors = 0
-        for group in self._groups(items):
-            if time.time() > deadline:
-                break
+    def classify_now(self, items: list[dict[str, Any]], deadline: float, workers: int = 8) -> int:
+        """Classify right away (a few hundred items per run), several requests in parallel."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        lock = threading.Lock()
+        state = {"done": 0, "errors": 0}
+
+        def one(group: list[dict[str, Any]]) -> None:
+            if time.time() > deadline or state["errors"] >= MAX_API_ERRORS:
+                return
             try:
                 msg = self.client.messages.create(
                     **build_group_request(group, self.thumbs_dir, self.tax, self.model)
                 )
-                done += _apply_group(group, _entries(msg), self.tax)
-                errors = 0
+                entries = _entries(msg)
+                with lock:
+                    state["done"] += _apply_group(group, entries, self.tax)
+                    state["errors"] = 0
             except Exception as exc:
                 # An API failure (billing, bad request, overload) is not the item's fault:
                 # do not count an attempt, so items are not given up as Uncategorized.
-                errors += 1
+                with lock:
+                    state["errors"] += 1
+                    n = state["errors"]
                 log.warning("lite classify error: %s", api_error_text(exc))
-                if errors >= MAX_API_ERRORS:
-                    log.warning("stopping AI classification for this run after %d API errors",
-                                errors)
-                    break
-        return done
+                if n == MAX_API_ERRORS:
+                    log.warning("stopping AI classification for this run after %d API errors", n)
+
+        groups = self._groups(items)
+        if workers <= 1:
+            for g in groups:
+                one(g)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(one, groups))
+        return state["done"]
 
     def submit_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         items = items[:BATCH_MAX_ITEMS]
@@ -250,6 +282,7 @@ class LiteClassifier:
         return {
             "id": batch.id,
             "kind": "lite",
+            "cats": list(self.tax.all_categories),
             "groups": groups,
             "item_ids": [it["id"] for it in items],
             "submitted_at": time.time(),
@@ -268,5 +301,5 @@ class LiteClassifier:
             seen.add(res.custom_id)
             group = [items[i] for i in ids if i in items]
             entries = _entries(res.result.message) if res.result.type == "succeeded" else []
-            done += _apply_group(group, entries, self.tax)
+            done += _apply_group(group, entries, self.tax, record.get("cats") or LEGACY_CATS_V1)
         return done

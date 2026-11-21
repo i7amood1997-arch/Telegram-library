@@ -96,8 +96,8 @@ class Settings:
     guest_name: str = ""
     thumb_secret: str = ""
     classifier_model: str = "claude-haiku-5-5"
-    max_classifications: int = 300
-    batch_threshold: int = 40
+    max_classifications: int = 2500
+    batch_threshold: int = 2500
     max_batch_items: int = 30000
     time_budget_s: int = 20 * 60
 
@@ -117,8 +117,8 @@ class Settings:
             guest_name=_env("GUEST_NAME"),
             thumb_secret=_env("THUMB_SECRET"),
             classifier_model=_env("CLASSIFIER_MODEL") or "claude-haiku-5-5",
-            max_classifications=int(_env("MAX_CLASSIFICATIONS_PER_RUN") or 300),
-            batch_threshold=int(_env("BATCH_THRESHOLD") or 40),
+            max_classifications=int(_env("MAX_CLASSIFICATIONS_PER_RUN") or 2500),
+            batch_threshold=int(_env("BATCH_THRESHOLD") or 2500),
             max_batch_items=int(_env("MAX_BATCH_ITEMS") or 30000),
             time_budget_s=int(_env("TIME_BUDGET_SECONDS") or 20 * 60),
         )
